@@ -179,4 +179,476 @@ export const TOOL_SCHEMAS = {
       required: ['hangoutId', 'status'],
     },
   },
+  get_idea_lists: {
+    name: 'get_idea_lists',
+    description:
+      "Get all idea lists for a group, or a specific list with its ideas. Each idea list has a name, category, and list of ideas with interest counts. Use when the user asks about restaurant/trail/show lists, or when you need to find an ideaId or ideaListId for other operations.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        groupId: {
+          type: 'string',
+          description: 'UUID of the group',
+        },
+        listId: {
+          type: 'string',
+          description:
+            'UUID of a specific idea list. If omitted, returns all lists for the group.',
+        },
+      },
+      required: ['groupId'],
+    },
+  },
+
+  get_watch_party: {
+    name: 'get_watch_party',
+    description:
+      "Get details for a watch party series including episode schedule, who's watching, and next episode info. You need the seriesId — find it from get_group_feed where type='series'.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        groupId: {
+          type: 'string',
+          description: 'UUID of the group',
+        },
+        seriesId: {
+          type: 'string',
+          description: 'UUID of the watch party series',
+        },
+      },
+      required: ['groupId', 'seriesId'],
+    },
+  },
+
+  create_idea_list: {
+    name: 'create_idea_list',
+    description:
+      "Create a new idea list in a group. Infer the category from context: 'restaurant list' → RESTAURANT, 'trail list' → TRAIL, 'show ideas' → SHOW, 'bar list' → BAR, 'book list' → BOOK, 'movie list' → MOVIE, 'travel list' → TRAVEL, 'activity list' → ACTIVITY. Default to OTHER if unclear.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        groupId: {
+          type: 'string',
+          description: 'UUID of the group',
+        },
+        name: {
+          type: 'string',
+          description: 'List name, 1-100 characters',
+        },
+        category: {
+          type: 'string',
+          enum: ['RESTAURANT', 'ACTIVITY', 'TRAIL', 'MOVIE', 'BOOK', 'TRAVEL', 'SHOW', 'BAR', 'OTHER'],
+          description: 'Category for the list',
+        },
+        note: {
+          type: 'string',
+          description: 'Optional description, max 500 characters',
+        },
+      },
+      required: ['groupId', 'name'],
+    },
+  },
+
+  add_idea: {
+    name: 'add_idea',
+    description:
+      'Add an idea to an existing idea list. At minimum provide a name. For places (restaurants, bars, trails), include address info if known.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        groupId: {
+          type: 'string',
+          description: 'UUID of the group',
+        },
+        listId: {
+          type: 'string',
+          description: 'UUID of the idea list',
+        },
+        name: {
+          type: 'string',
+          description: 'Idea name, 1-200 characters',
+        },
+        note: {
+          type: 'string',
+          description: 'Optional note, max 1000 characters',
+        },
+        url: {
+          type: 'string',
+          description: 'Optional URL for the idea',
+        },
+        address: {
+          type: 'string',
+          description: 'Optional address, max 500 characters',
+        },
+      },
+      required: ['groupId', 'listId', 'name'],
+    },
+  },
+
+  toggle_idea_interest: {
+    name: 'toggle_idea_interest',
+    description:
+      "Toggle the user's interest on an idea. If the user is not interested, marks them as interested. If already interested, removes their interest.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        groupId: {
+          type: 'string',
+          description: 'UUID of the group',
+        },
+        listId: {
+          type: 'string',
+          description: 'UUID of the idea list',
+        },
+        ideaId: {
+          type: 'string',
+          description: 'UUID of the idea',
+        },
+        interested: {
+          type: 'boolean',
+          description: 'true to add interest, false to remove',
+        },
+      },
+      required: ['groupId', 'listId', 'ideaId', 'interested'],
+    },
+  },
+
+  offer_ride: {
+    name: 'offer_ride',
+    description:
+      'Offer a ride (carpool) for a hangout. Capacity is total seats including the driver, between 2 and 8.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        hangoutId: {
+          type: 'string',
+          description: 'UUID of the hangout',
+        },
+        capacity: {
+          type: 'integer',
+          minimum: 2,
+          maximum: 8,
+          description: 'Total seats including driver (2-8)',
+        },
+        notes: {
+          type: 'string',
+          description: "Optional note (e.g., 'Leaving from downtown at 5pm'), max 500 chars",
+        },
+      },
+      required: ['hangoutId', 'capacity'],
+    },
+  },
+
+  request_ride: {
+    name: 'request_ride',
+    description:
+      "Request a ride to a hangout. Lets the group know you need a ride.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        hangoutId: {
+          type: 'string',
+          description: 'UUID of the hangout',
+        },
+        notes: {
+          type: 'string',
+          description: "Optional note (e.g., 'Coming from north side'), max 500 chars",
+        },
+      },
+      required: ['hangoutId'],
+    },
+  },
+
+  update_ticket_status: {
+    name: 'update_ticket_status',
+    description:
+      "Update the user's ticket status for a hangout. Use TICKET_PURCHASED for 'I got my ticket', TICKET_EXTRA for 'I have extra tickets', TICKET_NEEDED for 'I still need a ticket'. Optionally include section and seat info.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        hangoutId: {
+          type: 'string',
+          description: 'UUID of the hangout',
+        },
+        type: {
+          type: 'string',
+          enum: ['TICKET_PURCHASED', 'TICKET_EXTRA', 'TICKET_NEEDED'],
+          description: 'Ticket status type',
+        },
+        section: {
+          type: 'string',
+          description: "Optional section info (e.g., 'Section 201'), max 200 chars",
+        },
+        seat: {
+          type: 'string',
+          description: "Optional seat info (e.g., 'Row A, Seat 4'), max 50 chars",
+        },
+      },
+      required: ['hangoutId', 'type'],
+    },
+  },
+
+  parse_event_url: {
+    name: 'parse_event_url',
+    description:
+      'Parse event details from a URL (Ticketmaster, Eventbrite, etc.). Returns structured event data that can be used to create a hangout. After showing the parsed details to the user, use create_hangout with the parsed data.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        url: {
+          type: 'string',
+          description: 'HTTPS URL of the event page',
+        },
+      },
+      required: ['url'],
+    },
+  },
+
+  create_time_suggestion: {
+    name: 'create_time_suggestion',
+    description:
+      "Suggest a fuzzy time for a hangout that doesn't have a time yet. Other group members can support the suggestion. Use build_time first if converting from natural language — but note this tool takes a fuzzyTime enum value, not a full timeInfo object. Only use for hangouts without a set time. To set a specific time on a hangout, use update_hangout instead.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        hangoutId: {
+          type: 'string',
+          description: 'UUID of the hangout',
+        },
+        fuzzyTime: {
+          type: 'string',
+          enum: [
+            'TONIGHT', 'TOMORROW', 'THIS_WEEKEND', 'NEXT_WEEKEND',
+            'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY',
+            'NEXT_WEEK', 'IN_TWO_WEEKS', 'THIS_MONTH', 'SOMETIME_SOON',
+          ],
+          description: 'Fuzzy time suggestion',
+        },
+        specificTime: {
+          type: 'number',
+          description:
+            'Optional Unix timestamp (seconds) for a more specific suggestion within the fuzzy range',
+        },
+      },
+      required: ['hangoutId', 'fuzzyTime'],
+    },
+  },
+  get_hangout_detail: {
+    name: 'get_hangout_detail',
+    description:
+      "Get full details for a specific hangout including attendance list (with names), polls with results, carpool status, and ticket status. Use this when the user asks about a specific hangout's details, who's going, poll results, carpool situation, or ticket status. You need the hangoutId — find it first using get_group_feed if you only have a name.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        hangoutId: {
+          type: 'string',
+          description: 'UUID of the hangout',
+        },
+      },
+      required: ['hangoutId'],
+    },
+  },
+
+  update_hangout: {
+    name: 'update_hangout',
+    description:
+      "Update an existing hangout. Use this to suggest a time, suggest a place, confirm a hangout ('lock it in'), or edit any detail. Only fields you include will be changed. To confirm a hangout, set confirmed=true. For time changes, use build_time first to get the timeInfo object.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        hangoutId: {
+          type: 'string',
+          description: 'UUID of the hangout to update',
+        },
+        title: { type: 'string' },
+        description: { type: 'string' },
+        confirmed: {
+          type: 'boolean',
+          description: 'Set to true to confirm/lock in the hangout',
+        },
+        timeInfo: {
+          type: 'object',
+          description: 'Same format as create_hangout timeInfo',
+          properties: {
+            periodGranularity: {
+              type: 'string',
+              enum: ['morning', 'afternoon', 'evening', 'night', 'day', 'weekend'],
+            },
+            periodStart: { type: 'string' },
+            startTime: { type: 'string' },
+            endTime: { type: 'string' },
+          },
+        },
+        location: {
+          type: 'object',
+          properties: {
+            name: { type: 'string' },
+            streetAddress: { type: 'string' },
+            city: { type: 'string' },
+            state: { type: 'string' },
+            postalCode: { type: 'string' },
+            country: { type: 'string' },
+          },
+        },
+        carpoolEnabled: { type: 'boolean' },
+        ticketLink: { type: 'string' },
+        ticketsRequired: { type: 'boolean' },
+        discountCode: { type: 'string' },
+      },
+      required: ['hangoutId'],
+    },
+  },
+
+  remove_rsvp: {
+    name: 'remove_rsvp',
+    description:
+      "Remove the user's RSVP from a hangout entirely. Use when the user says 'remove my RSVP' or 'take me off that'.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        hangoutId: {
+          type: 'string',
+          description: 'UUID of the hangout',
+        },
+      },
+      required: ['hangoutId'],
+    },
+  },
+
+  create_group: {
+    name: 'create_group',
+    description:
+      'Create a new group. The user becomes the admin. Groups are private by default.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        groupName: {
+          type: 'string',
+          description: 'Name for the group, 1-100 characters',
+        },
+        isPublic: {
+          type: 'boolean',
+          description: 'Whether the group is publicly visible. Default false.',
+        },
+      },
+      required: ['groupName'],
+    },
+  },
+
+  create_poll: {
+    name: 'create_poll',
+    description:
+      'Create a poll on a hangout. Optionally include initial options. If no options are provided, the group can suggest them.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        hangoutId: {
+          type: 'string',
+          description: 'UUID of the hangout (referred to as eventId in the API)',
+        },
+        title: {
+          type: 'string',
+          description: 'Poll question, 1-200 characters',
+        },
+        options: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Initial poll options. Each 1-100 characters.',
+        },
+        multipleChoice: {
+          type: 'boolean',
+          description: 'Allow multiple votes per person. Default false.',
+        },
+      },
+      required: ['hangoutId', 'title'],
+    },
+  },
+
+  vote_on_poll: {
+    name: 'vote_on_poll',
+    description:
+      "Cast a vote on a poll option. You need the hangoutId, pollId, and optionId — get these from get_hangout_detail which includes polls with their options and IDs. To add a new option and vote on it, first use add_poll_option, then vote on the returned optionId.",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        hangoutId: {
+          type: 'string',
+          description: 'UUID of the hangout',
+        },
+        pollId: {
+          type: 'string',
+          description: 'UUID of the poll',
+        },
+        optionId: {
+          type: 'string',
+          description: 'UUID of the option to vote for',
+        },
+      },
+      required: ['hangoutId', 'pollId', 'optionId'],
+    },
+  },
+
+  add_poll_option: {
+    name: 'add_poll_option',
+    description:
+      'Add a new option to an existing poll. Returns the new optionId which you can then use with vote_on_poll.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        hangoutId: {
+          type: 'string',
+          description: 'UUID of the hangout',
+        },
+        pollId: {
+          type: 'string',
+          description: 'UUID of the poll',
+        },
+        text: {
+          type: 'string',
+          description: 'Option text, 1-100 characters',
+        },
+      },
+      required: ['hangoutId', 'pollId', 'text'],
+    },
+  },
+
+  add_member: {
+    name: 'add_member',
+    description:
+      "Add a member to a group by phone number or user ID. Use phone number when the user says 'add 555-123-4567 to the group'. Format the phone number as E.164 (e.g., +15551234567).",
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        groupId: {
+          type: 'string',
+          description: 'UUID of the group',
+        },
+        phoneNumber: {
+          type: 'string',
+          description: 'Phone number in E.164 format (e.g., +15551234567)',
+        },
+        userId: {
+          type: 'string',
+          description: 'UUID of the user to add',
+        },
+      },
+      required: ['groupId'],
+    },
+  },
+
+  generate_invite_link: {
+    name: 'generate_invite_link',
+    description:
+      'Generate a shareable invite link for a group. Anyone with the link can join.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        groupId: {
+          type: 'string',
+          description: 'UUID of the group',
+        },
+      },
+      required: ['groupId'],
+    },
+  },
 } as const;

@@ -136,6 +136,34 @@ export class HttpClient {
   }
 
   /**
+   * Make a request WITHOUT authentication headers.
+   * Used for endpoints like /external/parse that don't require auth.
+   */
+  async requestNoAuth<T>(path: string, opts: RequestOptions = {}): Promise<T> {
+    const url = `${this.baseUrl}${path}`;
+    const method = opts.method ?? 'GET';
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...opts.headers,
+    };
+    const body = opts.body !== undefined ? JSON.stringify(opts.body) : undefined;
+
+    const response = await fetch(url, { method, headers, body });
+
+    if (!response.ok) {
+      const respBody = await response.json().catch(() => null);
+      const err = normalizeApiError(response.status, respBody);
+      throw new HangoApiError(err.status, err.code, toConversationalMessage(err));
+    }
+
+    if (response.status === 204) {
+      return undefined as T;
+    }
+
+    return response.json() as Promise<T>;
+  }
+
+  /**
    * GET with ETag support. Returns { data, etag, notModified }.
    */
   async getWithEtag<T>(

@@ -9,25 +9,73 @@
  * 4. Response formatting — raw API → simplified JSON with computed fields
  */
 
+import { DateTime } from 'luxon';
 import { FeedCache } from './feed-cache.js';
-import { formatGroupFeed, computeAttendance, findUserRsvp } from './formatters.js';
+import { formatGroupFeed, formatTimeInfo, computeAttendance, findUserRsvp } from './formatters.js';
 import { HangoApiError, HttpClient } from './http-client.js';
 import { parseNaturalTime } from './time-parser.js';
 import type {
+  AddIdeaInput,
+  AddIdeaOutput,
+  AddMemberInput,
+  AddMemberOutput,
+  AddPollOptionInput,
+  AddPollOptionOutput,
+  ApiCarDTO,
+  ApiCarRiderDTO,
   ApiCreateHangoutResponse,
   ApiGroupDTO,
   ApiGroupFeedResponse,
   ApiHangoutDetail,
+  ApiIdeaDTO,
+  ApiIdeaListDTO,
+  ApiParticipationDTO,
+  ApiPollDTO,
+  ApiTimeSuggestionDTO,
+  ApiWatchPartySeriesDTO,
   BuildTimeInput,
   BuildTimeOutput,
+  CreateGroupInput,
+  CreateGroupOutput,
   CreateHangoutInput,
   CreateHangoutOutput,
+  CreateIdeaListInput,
+  CreateIdeaListOutput,
+  CreatePollInput,
+  CreatePollOutput,
+  CreateTimeSuggestionInput,
+  CreateTimeSuggestionOutput,
+  GenerateInviteLinkInput,
+  GenerateInviteLinkOutput,
   GetGroupFeedInput,
   GetGroupFeedOutput,
+  GetHangoutDetailInput,
+  GetHangoutDetailOutput,
+  GetIdeaListDetailOutput,
+  GetIdeaListsAllOutput,
+  GetIdeaListsInput,
+  GetWatchPartyInput,
+  GetWatchPartyOutput,
   ListGroupsOutput,
+  OfferRideInput,
+  OfferRideOutput,
+  ParseEventUrlInput,
+  ParseEventUrlOutput,
+  RemoveRsvpInput,
+  RemoveRsvpOutput,
+  RequestRideInput,
+  RequestRideOutput,
   SessionContext,
   SetRsvpInput,
   SetRsvpOutput,
+  ToggleIdeaInterestInput,
+  ToggleIdeaInterestOutput,
+  UpdateHangoutInput,
+  UpdateHangoutOutput,
+  UpdateTicketStatusInput,
+  UpdateTicketStatusOutput,
+  VoteOnPollInput,
+  VoteOnPollOutput,
 } from './types.js';
 
 export class ToolHandlers {
@@ -208,6 +256,759 @@ export class ToolHandlers {
     };
   }
 
+  // ─── get_idea_lists (#4) ──────────────────────────────────────────────────
+
+  async getIdeaLists(input: GetIdeaListsInput): Promise<GetIdeaListsAllOutput | GetIdeaListDetailOutput> {
+    if (!input.groupId) {
+      throw new Error('groupId is required. Use list_groups first to find the group ID.');
+    }
+
+    if (input.listId) {
+      // Single list with ideas
+      const path = `/groups/${input.groupId}/idea-lists/${input.listId}`;
+      const list = await this.http.request<ApiIdeaListDTO & { ideas?: ApiIdeaDTO[] }>(path);
+      return {
+        listId: list.ideaListId ?? input.listId,
+        name: list.name,
+        category: list.category,
+        ideas: (list.ideas ?? []).map(idea => ({
+          ideaId: idea.ideaId ?? (idea as Record<string, unknown>).id as string,
+          name: idea.name,
+          note: idea.note,
+          address: idea.address,
+          rating: idea.rating ?? (idea as Record<string, unknown>).cachedRating as number | null,
+          priceLevel: idea.priceLevel ?? (idea as Record<string, unknown>).cachedPriceLevel as number | null,
+          interestCount: idea.interestCount ?? 0,
+          interestedNames: (idea.interestedUsers ?? []).map(u => u.displayName),
+          youInterested: idea.interestedUsers?.some(u => u.userId === this.ctx.userId) ?? false,
+        })),
+      };
+    }
+
+    // All lists for the group
+    const lists = await this.http.request<Array<ApiIdeaListDTO & { ideas?: ApiIdeaDTO[] }>>(
+      `/groups/${input.groupId}/idea-lists`,
+    );
+    const groupName = await this.resolveGroupName(input.groupId);
+    return {
+      groupName,
+      lists: lists.map(l => ({
+        listId: l.ideaListId ?? (l as Record<string, unknown>).id as string,
+        name: l.name,
+        category: l.category,
+        ideaCount: l.ideas?.length ?? 0,
+      })),
+    };
+  }
+
+  // ─── get_watch_party (#5) ────────────────────────────────────────────────
+
+  async getWatchParty(input: GetWatchPartyInput): Promise<GetWatchPartyOutput> {
+    if (!input.groupId) throw new Error('groupId is required.');
+    if (!input.seriesId) throw new Error('seriesId is required.');
+
+    const path = `/groups/${input.groupId}/watch-parties/${input.seriesId}`;
+    const wp = await this.http.request<ApiWatchPartySeriesDTO & {
+      defaultTime?: string;
+      dayOverride?: number;
+      timezone?: string;
+      interestLevels?: Array<{ userId: string; level: string; userName: string }>;
+      hangouts?: Array<{ hangoutId: string; title: string; startTimestamp: number | null; endTimestamp: number | null }>;
+    }>(path);
+
+    // Build schedule string from defaultTime + dayOverride
+    let schedule: string | null = wp.schedule ?? null;
+    if (!schedule && wp.defaultTime) {
+      const dayNames = ['Sundays', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursdays', 'Fridays', 'Saturdays'];
+      const dayStr = wp.dayOverride != null ? dayNames[wp.dayOverride] : null;
+      // Parse time like "20:00" into "8:00 PM"
+      const [h, m] = wp.defaultTime.split(':').map(Number);
+      const period = h! >= 12 ? 'PM' : 'AM';
+      const h12 = h! % 12 || 12;
+      const timeStr = m ? `${h12}:${String(m).padStart(2, '0')} ${period}` : `${h12}:00 ${period}`;
+      schedule = dayStr ? `${dayStr} at ${timeStr}` : `at ${timeStr}`;
+    }
+
+    // Categorize interest levels
+    const interestLevels = wp.interestLevels ?? [];
+    const going = interestLevels
+      .filter(il => il.level === 'GOING')
+      .map(il => ({ name: il.userName }));
+    const interested = interestLevels
+      .filter(il => il.level === 'INTERESTED')
+      .map(il => ({ name: il.userName }));
+    const yourEntry = interestLevels.find(il => il.userId === this.ctx.userId);
+    const yourStatus = yourEntry
+      ? (yourEntry.level as 'GOING' | 'INTERESTED' | 'NOT_GOING')
+      : null;
+
+    // Find next episode and count aired episodes
+    const hangouts = wp.hangouts ?? wp.parts?.map(p => ({
+      hangoutId: p.hangoutId,
+      title: p.title,
+      startTimestamp: p.startTimestamp,
+      endTimestamp: p.endTimestamp,
+    })) ?? [];
+
+    const now = Date.now();
+    let nextEpisode: GetWatchPartyOutput['nextEpisode'] = null;
+    let episodesAired = 0;
+
+    const sorted = [...hangouts].sort(
+      (a, b) => (a.startTimestamp ?? 0) - (b.startTimestamp ?? 0),
+    );
+
+    for (const ep of sorted) {
+      const ts = ep.startTimestamp ? ep.startTimestamp * (ep.startTimestamp < 1e12 ? 1000 : 1) : null;
+      if (ts && ts < now) {
+        episodesAired++;
+      } else if (ts && ts >= now && !nextEpisode) {
+        const dt = DateTime.fromMillis(ts).setZone(this.ctx.timezone);
+        nextEpisode = {
+          hangoutId: ep.hangoutId,
+          title: ep.title,
+          when: dt.isValid ? dt.toFormat("EEEE, LLL d 'at' h:mm a") : null,
+        };
+      }
+    }
+
+    return {
+      seriesId: wp.seriesId,
+      title: wp.title ?? (wp as Record<string, unknown>).seriesTitle as string,
+      schedule,
+      going,
+      interested,
+      yourStatus,
+      nextEpisode,
+      totalEpisodes: wp.totalParts ?? hangouts.length,
+      episodesAired,
+    };
+  }
+
+  // ─── create_idea_list (#14) ──────────────────────────────────────────────
+
+  async createIdeaList(input: CreateIdeaListInput): Promise<CreateIdeaListOutput> {
+    if (!input.groupId) throw new Error('groupId is required.');
+    if (!input.name || input.name.trim().length === 0) throw new Error('name is required.');
+
+    const body: Record<string, unknown> = { name: input.name };
+    if (input.category) body.category = input.category;
+    if (input.note) body.note = input.note;
+
+    const result = await this.http.request<ApiIdeaListDTO>(
+      `/groups/${input.groupId}/idea-lists`,
+      { method: 'POST', body },
+    );
+
+    const groupName = await this.resolveGroupName(input.groupId);
+
+    return {
+      listId: result.ideaListId ?? (result as Record<string, unknown>).id as string,
+      name: result.name,
+      category: result.category,
+      groupName,
+    };
+  }
+
+  // ─── add_idea (#15) ──────────────────────────────────────────────────────
+
+  async addIdea(input: AddIdeaInput): Promise<AddIdeaOutput> {
+    if (!input.groupId) throw new Error('groupId is required.');
+    if (!input.listId) throw new Error('listId is required.');
+    if (!input.name || input.name.trim().length === 0) throw new Error('name is required.');
+
+    const body: Record<string, unknown> = { name: input.name };
+    if (input.note) body.note = input.note;
+    if (input.url) body.url = input.url;
+    if (input.address) body.address = input.address;
+
+    const result = await this.http.request<ApiIdeaDTO & { listName?: string }>(
+      `/groups/${input.groupId}/idea-lists/${input.listId}/ideas`,
+      { method: 'POST', body },
+    );
+
+    // Try to get list name from a fetch if not in response
+    let listName = result.listName ?? '';
+    if (!listName) {
+      try {
+        const list = await this.http.request<ApiIdeaListDTO>(
+          `/groups/${input.groupId}/idea-lists/${input.listId}`,
+        );
+        listName = list.name;
+      } catch {
+        listName = 'Idea List';
+      }
+    }
+
+    return {
+      ideaId: result.ideaId ?? (result as Record<string, unknown>).id as string,
+      name: result.name,
+      listName,
+    };
+  }
+
+  // ─── toggle_idea_interest (#16) ──────────────────────────────────────────
+
+  async toggleIdeaInterest(input: ToggleIdeaInterestInput): Promise<ToggleIdeaInterestOutput> {
+    if (!input.groupId) throw new Error('groupId is required.');
+    if (!input.listId) throw new Error('listId is required.');
+    if (!input.ideaId) throw new Error('ideaId is required.');
+
+    const basePath = `/groups/${input.groupId}/idea-lists/${input.listId}/ideas/${input.ideaId}/interest`;
+
+    const result = await this.http.request<ApiIdeaDTO>(basePath, {
+      method: input.interested ? 'PUT' : 'DELETE',
+    });
+
+    return {
+      ideaId: input.ideaId,
+      name: result.name,
+      youInterested: input.interested,
+      interestCount: result.interestCount ?? 0,
+    };
+  }
+
+  // ─── offer_ride (#19) ────────────────────────────────────────────────────
+
+  async offerRide(input: OfferRideInput): Promise<OfferRideOutput> {
+    if (!input.hangoutId) throw new Error('hangoutId is required.');
+    if (!input.capacity || input.capacity < 2 || input.capacity > 8) {
+      throw new Error('capacity must be between 2 and 8 (includes driver).');
+    }
+
+    const body: Record<string, unknown> = { totalCapacity: input.capacity };
+    if (input.notes) body.notes = input.notes;
+
+    const result = await this.http.request<{
+      totalCapacity: number;
+      availableSeats: number;
+      notes: string | null;
+    }>(`/events/${input.hangoutId}/carpool/cars`, { method: 'POST', body });
+
+    return {
+      hangoutId: input.hangoutId,
+      capacity: result.totalCapacity,
+      seatsOpen: result.availableSeats,
+      notes: result.notes ?? input.notes ?? null,
+    };
+  }
+
+  // ─── request_ride (#20) ──────────────────────────────────────────────────
+
+  async requestRide(input: RequestRideInput): Promise<RequestRideOutput> {
+    if (!input.hangoutId) throw new Error('hangoutId is required.');
+
+    const body: Record<string, unknown> = {};
+    if (input.notes) body.notes = input.notes;
+
+    await this.http.request(`/events/${input.hangoutId}/carpool/riderequests`, {
+      method: 'POST',
+      body,
+    });
+
+    return {
+      hangoutId: input.hangoutId,
+      requested: true,
+    };
+  }
+
+  // ─── update_ticket_status (#21) — Upsert pattern ────────────────────────
+
+  async updateTicketStatus(input: UpdateTicketStatusInput): Promise<UpdateTicketStatusOutput> {
+    if (!input.hangoutId) throw new Error('hangoutId is required.');
+    if (!input.type) throw new Error('type is required (TICKET_PURCHASED, TICKET_EXTRA, or TICKET_NEEDED).');
+
+    // Check for existing participation by this user
+    const participations = await this.http.request<ApiParticipationDTO[]>(
+      `/hangouts/${input.hangoutId}/participations`,
+    );
+
+    const existing = participations.find(p => p.userId === this.ctx.userId);
+
+    const body: Record<string, unknown> = { type: input.type };
+    if (input.section !== undefined) body.section = input.section;
+    if (input.seat !== undefined) body.seat = input.seat;
+
+    let result: ApiParticipationDTO;
+
+    if (existing) {
+      // Update existing participation
+      result = await this.http.request<ApiParticipationDTO>(
+        `/hangouts/${input.hangoutId}/participations/${existing.participationId}`,
+        { method: 'PUT', body },
+      );
+    } else {
+      // Create new participation
+      result = await this.http.request<ApiParticipationDTO>(
+        `/hangouts/${input.hangoutId}/participations`,
+        { method: 'POST', body },
+      );
+    }
+
+    return {
+      hangoutId: input.hangoutId,
+      participationId: result.participationId,
+      type: result.type,
+      section: result.section ?? null,
+    };
+  }
+
+  // ─── parse_event_url (#22) — No auth required ───────────────────────────
+
+  async parseEventUrl(input: ParseEventUrlInput): Promise<ParseEventUrlOutput> {
+    if (!input.url || input.url.trim().length === 0) {
+      throw new Error('url is required.');
+    }
+
+    const result = await this.http.requestNoAuth<{
+      title?: string;
+      description?: string;
+      startTime?: string;
+      endTime?: string;
+      location?: {
+        name?: string;
+        streetAddress?: string;
+        city?: string;
+        state?: string;
+        postalCode?: string;
+        country?: string;
+      };
+      url?: string;
+      sourceUrl?: string;
+      ticketOffers?: unknown[];
+    }>('/external/parse', {
+      method: 'POST',
+      body: { url: input.url },
+    });
+
+    // Build human-readable "when" string from startTime/endTime
+    let when: string | null = null;
+    if (result.startTime) {
+      when = formatTimeInfo(
+        { startTime: result.startTime, endTime: result.endTime },
+        this.ctx.timezone,
+      );
+    }
+
+    return {
+      title: result.title ?? 'Untitled Event',
+      description: result.description ?? null,
+      when,
+      startTime: result.startTime ?? null,
+      endTime: result.endTime ?? null,
+      location: result.location ?? null,
+      ticketLink: result.url ?? result.sourceUrl ?? input.url,
+      hasTickets: (result.ticketOffers?.length ?? 0) > 0,
+    };
+  }
+
+  // ─── create_time_suggestion (#23) ────────────────────────────────────────
+
+  async createTimeSuggestion(input: CreateTimeSuggestionInput): Promise<CreateTimeSuggestionOutput> {
+    if (!input.hangoutId) throw new Error('hangoutId is required.');
+    if (!input.fuzzyTime) throw new Error('fuzzyTime is required.');
+
+    // Resolve groupId from hangoutId mapping
+    const groupId = await this.resolveGroupIdForHangout(input.hangoutId);
+    if (!groupId) {
+      throw new Error(
+        'Could not determine which group this hangout belongs to. Try viewing the group feed first with get_group_feed.',
+      );
+    }
+
+    const body: Record<string, unknown> = { fuzzyTime: input.fuzzyTime };
+    if (input.specificTime !== undefined) body.specificTime = input.specificTime;
+
+    const result = await this.http.request<ApiTimeSuggestionDTO>(
+      `/groups/${groupId}/hangouts/${input.hangoutId}/time-suggestions`,
+      { method: 'POST', body },
+    );
+
+    return {
+      suggestionId: result.suggestionId,
+      fuzzyTime: result.fuzzyTime,
+      supportCount: result.supportCount ?? 0,
+    };
+  }
+
+  // ─── get_hangout_detail (#3) — Biggest response formatter ────────────────
+
+  async getHangoutDetail(input: GetHangoutDetailInput): Promise<GetHangoutDetailOutput> {
+    if (!input.hangoutId) {
+      throw new Error('hangoutId is required. Use get_group_feed first to find the hangout ID.');
+    }
+
+    const detail = await this.http.request<ApiHangoutDetail>(
+      `/hangouts/${input.hangoutId}`,
+    );
+
+    const hangout = detail.hangout;
+
+    // Cache the groupId mapping
+    const groupId = hangout.associatedGroups?.[0] ?? null;
+    if (groupId) {
+      this.feedCache.setHangoutGroupMapping(input.hangoutId, groupId);
+    }
+
+    // Format location
+    let location: GetHangoutDetailOutput['location'] = null;
+    if (hangout.location) {
+      const loc = hangout.location;
+      const addressParts: string[] = [];
+      if (loc.streetAddress) addressParts.push(loc.streetAddress);
+      if (loc.city) addressParts.push(loc.city);
+      if (loc.state) addressParts.push(loc.state);
+      if (loc.postalCode) addressParts.push(loc.postalCode);
+      location = {
+        name: loc.name ?? '',
+        address: addressParts.join(', '),
+      };
+    }
+
+    // Format attendance by status
+    const attendance: GetHangoutDetailOutput['attendance'] = {
+      going: [],
+      interested: [],
+      notGoing: [],
+    };
+    for (const il of detail.attendance ?? []) {
+      const entry = { userId: il.userId, name: il.userName, notes: il.notes };
+      switch (il.status) {
+        case 'GOING': attendance.going.push(entry); break;
+        case 'INTERESTED': attendance.interested.push(entry); break;
+        case 'NOT_GOING': attendance.notGoing.push(entry); break;
+      }
+    }
+
+    // Format polls
+    const polls = (detail.polls ?? []).map((poll: ApiPollDTO) => ({
+      pollId: poll.pollId,
+      title: poll.title,
+      options: poll.options.map(opt => ({
+        optionId: opt.optionId,
+        text: opt.text,
+        votes: opt.voteCount,
+        voterNames: [] as string[], // voter names not available in list response
+        youVoted: opt.userVoted,
+      })),
+      totalVotes: poll.totalVotes,
+    }));
+
+    // Format carpool
+    const carsById = new Map<string, ApiCarDTO>();
+    for (const car of detail.cars ?? []) {
+      carsById.set(car.carId, car);
+    }
+    const ridersByCar = new Map<string, string[]>();
+    for (const rider of detail.carRiders ?? []) {
+      const list = ridersByCar.get(rider.carId) ?? [];
+      list.push(rider.displayName);
+      ridersByCar.set(rider.carId, list);
+    }
+    const carpool = {
+      cars: (detail.cars ?? []).map(car => {
+        const riders = ridersByCar.get(car.carId) ?? [];
+        return {
+          driverName: car.displayName,
+          driverId: car.userId,
+          capacity: car.capacity,
+          seatsOpen: Math.max(0, car.capacity - 1 - riders.length), // -1 for driver
+          riders,
+          notes: car.notes,
+        };
+      }),
+      rideRequests: (detail.needsRide ?? []).map(r => ({
+        name: r.displayName,
+        notes: r.notes,
+      })),
+    };
+
+    // Format tickets
+    let tickets: GetHangoutDetailOutput['tickets'] = null;
+    if (hangout.ticketsRequired) {
+      const haveTickets: Array<{ name: string; section: string | null; seat: string | null }> = [];
+      const needTickets: Array<{ name: string }> = [];
+      const extraTickets: Array<{ name: string }> = [];
+      for (const p of detail.participations ?? []) {
+        switch (p.type) {
+          case 'TICKET_PURCHASED':
+            haveTickets.push({ name: p.displayName, section: p.section, seat: p.seat });
+            break;
+          case 'TICKET_NEEDED':
+            needTickets.push({ name: p.displayName });
+            break;
+          case 'TICKET_EXTRA':
+            extraTickets.push({ name: p.displayName });
+            break;
+        }
+      }
+      tickets = {
+        required: true,
+        ticketLink: hangout.ticketLink ?? null,
+        discountCode: hangout.discountCode ?? null,
+        haveTickets,
+        needTickets,
+        extraTickets,
+      };
+    }
+
+    // Format time suggestions
+    const timeSuggestions = (detail.timeSuggestions ?? []).map(ts => {
+      // Resolve suggestedBy name from attendance
+      const suggestor = (detail.attendance ?? []).find(a => a.userId === ts.suggestedBy);
+      return {
+        suggestionId: ts.suggestionId,
+        fuzzyTime: ts.fuzzyTime,
+        supportCount: ts.supportCount,
+        suggestedByName: suggestor?.userName ?? 'Unknown',
+      };
+    });
+
+    // Format nudges as string array of types
+    const nudges = (detail.nudges ?? []).map(n => n.type);
+
+    return {
+      hangoutId: hangout.hangoutId,
+      title: hangout.title,
+      description: hangout.description,
+      momentum: hangout.momentumCategory ?? detail.momentum?.category ?? 'BUILDING',
+      when: formatTimeInfo(hangout.timeInfo, this.ctx.timezone),
+      location,
+      attendance,
+      yourRsvpStatus: findUserRsvp(detail.attendance ?? [], this.ctx.userId),
+      polls,
+      carpool,
+      tickets,
+      timeSuggestions,
+      nudges,
+    };
+  }
+
+  // ─── update_hangout (#7) — Partial update + cache invalidation ──────────
+
+  async updateHangout(input: UpdateHangoutInput): Promise<UpdateHangoutOutput> {
+    if (!input.hangoutId) {
+      throw new Error('hangoutId is required.');
+    }
+
+    // Build request body with only provided fields
+    const body: Record<string, unknown> = {};
+    if (input.title !== undefined) body.title = input.title;
+    if (input.description !== undefined) body.description = input.description;
+    if (input.confirmed !== undefined) body.confirmed = input.confirmed;
+    if (input.timeInfo !== undefined) body.timeInfo = input.timeInfo;
+    if (input.location !== undefined) body.location = input.location;
+    if (input.carpoolEnabled !== undefined) body.carpoolEnabled = input.carpoolEnabled;
+    if (input.ticketLink !== undefined) body.ticketLink = input.ticketLink;
+    if (input.ticketsRequired !== undefined) body.ticketsRequired = input.ticketsRequired;
+    if (input.discountCode !== undefined) body.discountCode = input.discountCode;
+
+    await this.http.request(`/hangouts/${input.hangoutId}`, {
+      method: 'PATCH',
+      body,
+    });
+
+    // Invalidate feed cache for the affected group
+    const groupId = await this.resolveGroupIdForHangout(input.hangoutId);
+    if (groupId) {
+      this.feedCache.invalidate(groupId);
+    }
+
+    return {
+      hangoutId: input.hangoutId,
+      success: true,
+    };
+  }
+
+  // ─── remove_rsvp (#9) — Delete RSVP ────────────────────────────────────
+
+  async removeRsvp(input: RemoveRsvpInput): Promise<RemoveRsvpOutput> {
+    if (!input.hangoutId) {
+      throw new Error('hangoutId is required.');
+    }
+
+    // Fetch detail first to get the title before deleting
+    const detail = await this.http.request<ApiHangoutDetail>(
+      `/hangouts/${input.hangoutId}`,
+    );
+
+    await this.http.request(`/hangouts/${input.hangoutId}/interest`, {
+      method: 'DELETE',
+    });
+
+    // Invalidate feed cache
+    const groupId = this.feedCache.getGroupIdForHangout(input.hangoutId)
+      ?? detail.hangout.associatedGroups?.[0]
+      ?? null;
+    if (groupId) {
+      this.feedCache.setHangoutGroupMapping(input.hangoutId, groupId);
+      this.feedCache.invalidate(groupId);
+    }
+
+    return {
+      hangoutId: input.hangoutId,
+      title: detail.hangout.title,
+      removed: true,
+    };
+  }
+
+  // ─── create_group (#10) ─────────────────────────────────────────────────
+
+  async createGroup(input: CreateGroupInput): Promise<CreateGroupOutput> {
+    if (!input.groupName || input.groupName.trim().length === 0) {
+      throw new Error('groupName is required.');
+    }
+
+    const body: Record<string, unknown> = {
+      groupName: input.groupName,
+      isPublic: input.isPublic ?? false,
+    };
+
+    const result = await this.http.request<ApiGroupDTO>('/groups', {
+      method: 'POST',
+      body,
+    });
+
+    // Invalidate group cache so next list_groups picks up the new group
+    this.groupCache = null;
+
+    return {
+      groupId: result.groupId,
+      groupName: result.groupName,
+    };
+  }
+
+  // ─── create_poll (#11) ──────────────────────────────────────────────────
+
+  async createPoll(input: CreatePollInput): Promise<CreatePollOutput> {
+    if (!input.hangoutId) throw new Error('hangoutId is required.');
+    if (!input.title || input.title.trim().length === 0) throw new Error('title is required.');
+
+    const body: Record<string, unknown> = {
+      title: input.title,
+      multipleChoice: input.multipleChoice ?? false,
+    };
+    if (input.options) body.options = input.options;
+
+    const result = await this.http.request<{
+      eventId: string;
+      pollId: string;
+      title: string;
+    }>(`/hangouts/${input.hangoutId}/polls`, { method: 'POST', body });
+
+    // Fetch the poll to get options with their IDs
+    const polls = await this.http.request<ApiPollDTO[]>(
+      `/hangouts/${input.hangoutId}/polls`,
+    );
+    const createdPoll = polls.find(p => p.pollId === result.pollId);
+
+    return {
+      pollId: result.pollId,
+      hangoutId: input.hangoutId,
+      title: result.title,
+      options: (createdPoll?.options ?? []).map(o => ({
+        optionId: o.optionId,
+        text: o.text,
+      })),
+    };
+  }
+
+  // ─── vote_on_poll (#12) ─────────────────────────────────────────────────
+
+  async voteOnPoll(input: VoteOnPollInput): Promise<VoteOnPollOutput> {
+    if (!input.hangoutId) throw new Error('hangoutId is required.');
+    if (!input.pollId) throw new Error('pollId is required.');
+    if (!input.optionId) throw new Error('optionId is required.');
+
+    await this.http.request(
+      `/hangouts/${input.hangoutId}/polls/${input.pollId}/vote`,
+      { method: 'POST', body: { optionId: input.optionId, voteType: 'YES' } },
+    );
+
+    // Re-fetch the poll to get updated counts and option text
+    const polls = await this.http.request<ApiPollDTO[]>(
+      `/hangouts/${input.hangoutId}/polls`,
+    );
+    const poll = polls.find(p => p.pollId === input.pollId);
+    const option = poll?.options.find(o => o.optionId === input.optionId);
+
+    return {
+      pollId: input.pollId,
+      optionText: option?.text ?? 'Unknown option',
+      totalVotesForOption: option?.voteCount ?? 1,
+      pollTotalVotes: poll?.totalVotes ?? 1,
+    };
+  }
+
+  // ─── add_poll_option (#13) ──────────────────────────────────────────────
+
+  async addPollOption(input: AddPollOptionInput): Promise<AddPollOptionOutput> {
+    if (!input.hangoutId) throw new Error('hangoutId is required.');
+    if (!input.pollId) throw new Error('pollId is required.');
+    if (!input.text || input.text.trim().length === 0) throw new Error('text is required.');
+
+    const result = await this.http.request<{
+      eventId: string;
+      pollId: string;
+      optionId: string;
+      text: string;
+    }>(`/hangouts/${input.hangoutId}/polls/${input.pollId}/options`, {
+      method: 'POST',
+      body: { text: input.text },
+    });
+
+    return {
+      optionId: result.optionId,
+      text: result.text,
+      pollId: result.pollId,
+    };
+  }
+
+  // ─── add_member (#17) ──────────────────────────────────────────────────
+
+  async addMember(input: AddMemberInput): Promise<AddMemberOutput> {
+    if (!input.groupId) throw new Error('groupId is required.');
+    if (!input.phoneNumber && !input.userId) {
+      throw new Error('Either phoneNumber or userId is required.');
+    }
+
+    const body: Record<string, unknown> = {};
+    if (input.phoneNumber) body.phoneNumber = input.phoneNumber;
+    if (input.userId) body.userId = input.userId;
+
+    await this.http.request(`/groups/${input.groupId}/members`, {
+      method: 'POST',
+      body,
+    });
+
+    const groupName = await this.resolveGroupName(input.groupId);
+
+    return {
+      groupName,
+      added: true,
+      message: "Added to the group. If they don't have the app yet, they'll be in the group when they sign up.",
+    };
+  }
+
+  // ─── generate_invite_link (#18) ─────────────────────────────────────────
+
+  async generateInviteLink(input: GenerateInviteLinkInput): Promise<GenerateInviteLinkOutput> {
+    if (!input.groupId) throw new Error('groupId is required.');
+
+    const result = await this.http.request<{
+      inviteCode: string;
+      shareUrl: string;
+    }>(`/groups/${input.groupId}/invite-code`, { method: 'POST' });
+
+    const groupName = await this.resolveGroupName(input.groupId);
+
+    return {
+      groupName,
+      inviteCode: result.inviteCode,
+      shareUrl: result.shareUrl,
+    };
+  }
+
   // ─── Helpers ──────────────────────────────────────────────────────────────
 
   /** Resolve a groupId to its name. Caches group list on first call. */
@@ -262,6 +1063,44 @@ export class ToolHandlers {
           return await this.createHangout(args as unknown as CreateHangoutInput);
         case 'set_rsvp':
           return await this.setRsvp(args as unknown as SetRsvpInput);
+        case 'get_idea_lists':
+          return await this.getIdeaLists(args as unknown as GetIdeaListsInput);
+        case 'get_watch_party':
+          return await this.getWatchParty(args as unknown as GetWatchPartyInput);
+        case 'create_idea_list':
+          return await this.createIdeaList(args as unknown as CreateIdeaListInput);
+        case 'add_idea':
+          return await this.addIdea(args as unknown as AddIdeaInput);
+        case 'toggle_idea_interest':
+          return await this.toggleIdeaInterest(args as unknown as ToggleIdeaInterestInput);
+        case 'offer_ride':
+          return await this.offerRide(args as unknown as OfferRideInput);
+        case 'request_ride':
+          return await this.requestRide(args as unknown as RequestRideInput);
+        case 'update_ticket_status':
+          return await this.updateTicketStatus(args as unknown as UpdateTicketStatusInput);
+        case 'parse_event_url':
+          return await this.parseEventUrl(args as unknown as ParseEventUrlInput);
+        case 'create_time_suggestion':
+          return await this.createTimeSuggestion(args as unknown as CreateTimeSuggestionInput);
+        case 'get_hangout_detail':
+          return await this.getHangoutDetail(args as unknown as GetHangoutDetailInput);
+        case 'update_hangout':
+          return await this.updateHangout(args as unknown as UpdateHangoutInput);
+        case 'remove_rsvp':
+          return await this.removeRsvp(args as unknown as RemoveRsvpInput);
+        case 'create_group':
+          return await this.createGroup(args as unknown as CreateGroupInput);
+        case 'create_poll':
+          return await this.createPoll(args as unknown as CreatePollInput);
+        case 'vote_on_poll':
+          return await this.voteOnPoll(args as unknown as VoteOnPollInput);
+        case 'add_poll_option':
+          return await this.addPollOption(args as unknown as AddPollOptionInput);
+        case 'add_member':
+          return await this.addMember(args as unknown as AddMemberInput);
+        case 'generate_invite_link':
+          return await this.generateInviteLink(args as unknown as GenerateInviteLinkInput);
         default:
           throw new Error(`Unknown tool: ${toolName}. This tool is not yet implemented.`);
       }
