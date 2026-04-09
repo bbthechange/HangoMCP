@@ -688,31 +688,29 @@ export class ToolHandlers {
         optionId: opt.optionId,
         text: opt.text,
         votes: opt.voteCount,
-        voterNames: [] as string[], // voter names not available in list response
+        voterNames: (opt.votes ?? [])
+          .filter(v => v.displayName)
+          .map(v => v.displayName!),
         youVoted: opt.userVoted,
       })),
       totalVotes: poll.totalVotes,
     }));
 
-    // Format carpool
-    const carsById = new Map<string, ApiCarDTO>();
-    for (const car of detail.cars ?? []) {
-      carsById.set(car.carId, car);
-    }
-    const ridersByCar = new Map<string, string[]>();
+    // Format carpool — detail response has flat cars + carRiders joined by driverId
+    const ridersByDriver = new Map<string, string[]>();
     for (const rider of detail.carRiders ?? []) {
-      const list = ridersByCar.get(rider.carId) ?? [];
-      list.push(rider.displayName);
-      ridersByCar.set(rider.carId, list);
+      const list = ridersByDriver.get(rider.driverId) ?? [];
+      list.push(rider.riderName);
+      ridersByDriver.set(rider.driverId, list);
     }
     const carpool = {
       cars: (detail.cars ?? []).map(car => {
-        const riders = ridersByCar.get(car.carId) ?? [];
+        const riders = ridersByDriver.get(car.driverId) ?? [];
         return {
-          driverName: car.displayName,
-          driverId: car.userId,
-          capacity: car.capacity,
-          seatsOpen: Math.max(0, car.capacity - 1 - riders.length), // -1 for driver
+          driverName: car.driverName,
+          driverId: car.driverId,
+          capacity: car.totalCapacity,
+          seatsOpen: car.availableSeats,
           riders,
           notes: car.notes,
         };

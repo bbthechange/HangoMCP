@@ -187,6 +187,7 @@ export interface ApiPollDTO {
     userVoted: boolean;
     createdBy: string;
     structuredValue: string | null;
+    votes: Array<{ userId: string; voteType: string; displayName: string | null }>;
   }>;
   totalVotes: number;
   attributeType: string | null;
@@ -195,19 +196,27 @@ export interface ApiPollDTO {
 }
 
 export interface ApiCarDTO {
-  carId: string;
-  userId: string;
-  displayName: string;
-  capacity: number;
+  eventId: string;
+  driverId: string;
+  driverName: string;
+  totalCapacity: number;
+  availableSeats: number;
   notes: string | null;
-  mainImagePath: string | null;
+  driverImagePath: string | null;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface ApiCarRiderDTO {
-  carId: string;
-  userId: string;
-  displayName: string;
-  mainImagePath: string | null;
+  eventId: string;
+  driverId: string;
+  riderId: string;
+  riderName: string;
+  plusOneCount: number;
+  notes: string | null;
+  riderImagePath: string | null;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface ApiParticipationDTO {
@@ -269,7 +278,8 @@ export interface ApiCreateHangoutResponse {
 }
 
 export interface ApiProfileResponse {
-  userId: string;
+  id: string;
+  username: string;
   displayName: string;
   phoneNumber?: string;
   mainImagePath?: string | null;

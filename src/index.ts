@@ -78,11 +78,11 @@ async function validateSession(
   const http = new HttpClient(tempCtx);
 
   const profile = await http.request<ApiProfileResponse>('/profile');
-  if (!profile.userId) {
-    throw new Error('Invalid profile response — no userId');
+  if (!profile.id) {
+    throw new Error('Invalid profile response — no id');
   }
 
-  return { userId: profile.userId, displayName: profile.displayName };
+  return { userId: profile.id, displayName: profile.displayName ?? profile.username };
 }
 
 // ─── Server Setup ───────────────────────────────────────────────────────────
