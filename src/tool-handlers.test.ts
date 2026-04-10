@@ -79,6 +79,32 @@ describe('ToolHandlers', () => {
       expect(postCall).toBeDefined();
     });
 
+    it('returns GOING rsvp when confirmed', async () => {
+      stubRequest(async (path: string, opts?: { method?: string }) => {
+        if (path === '/hangouts' && opts?.method === 'POST') {
+          return {
+            hangoutId: 'h-confirmed',
+            title: 'Dinner',
+            momentumCategory: 'CONFIRMED',
+            confirmedBy: 'user-001',
+          };
+        }
+        if (path === '/groups') {
+          return [buildGroup({ groupId: 'g-1', groupName: 'Friends' })];
+        }
+        return {};
+      });
+
+      const result = await handlers.createHangout({
+        groupId: 'g-1',
+        title: 'Dinner',
+        confirmed: true,
+      });
+
+      expect(result.yourRsvpStatus).toBe('GOING');
+      expect(result.momentum).toBe('CONFIRMED');
+    });
+
     it('throws on missing groupId', async () => {
       await expect(
         handlers.createHangout({ groupId: '', title: 'Test' }),
@@ -214,6 +240,48 @@ describe('ToolHandlers', () => {
       expect(result.groupName).toBe('Hikers');
       expect(result.scheduled.length).toBe(1);
       expect((result.scheduled[0] as { title: string }).title).toBe('Cached Hike');
+    });
+
+    it('does not serve stale cache for filtered requests', async () => {
+      const fullFeed = buildFeedResponse({
+        groupId: 'g-1',
+        withDay: [
+          buildHangout({ hangoutId: 'h-confirmed', title: 'Confirmed Event' }),
+          buildHangout({ hangoutId: 'h-building', title: 'Building Event' }),
+        ],
+      });
+      const filteredFeed = buildFeedResponse({
+        groupId: 'g-1',
+        withDay: [buildHangout({ hangoutId: 'h-confirmed', title: 'Confirmed Event' })],
+      });
+
+      stubRequest(async (path: string) => {
+        if (path === '/groups') {
+          return [buildGroup({ groupId: 'g-1', groupName: 'Group' })];
+        }
+        return {};
+      });
+
+      // First call — cache the full feed
+      const etagSpy = stubGetWithEtag(async () => ({
+        data: fullFeed,
+        etag: '"etag-full"',
+        notModified: false,
+      }));
+
+      await handlers.getGroupFeed({ groupId: 'g-1' });
+
+      // Filtered call — should NOT use cached full feed, even if server returns 304
+      // The code skips ETag for filtered requests, so it always gets fresh data
+      etagSpy.mockImplementation(async () => ({
+        data: filteredFeed,
+        etag: '"etag-filtered"',
+        notModified: false,
+      }));
+
+      const result = await handlers.getGroupFeed({ groupId: 'g-1', filter: 'CONFIRMED' });
+      expect(result.scheduled).toHaveLength(1);
+      expect((result.scheduled[0] as { title: string }).title).toBe('Confirmed Event');
     });
 
     it('throws on missing groupId', async () => {
@@ -427,16 +495,179 @@ describe('ToolHandlers', () => {
   // ─── getHangoutDetail ──────────────────────────────────────────────────
 
   describe('getHangoutDetail', () => {
-    it('formats detailed hangout response', async () => {
-      const detail = buildHangoutDetail();
+    it('formats detailed hangout response with attendance', async () => {
+      const detail = buildHangoutDetail({
+        attendance: [
+          buildInterestLevel({ userId: 'user-001', userName: 'Test User', status: 'GOING' }),
+          buildInterestLevel({ userId: 'user-002', userName: 'Alice', status: 'INTERESTED' }),
+          buildInterestLevel({ userId: 'user-003', userName: 'Bob', status: 'NOT_GOING' }),
+        ],
+      });
       stubRequest(async () => detail);
 
       const result = await handlers.getHangoutDetail({ hangoutId: 'hangout-detail-001' });
 
       expect(result.hangoutId).toBe('hangout-detail-001');
       expect(result.title).toBe('Detail Hangout');
-      expect(result.attendance.going.length).toBe(1);
+      expect(result.attendance.going).toHaveLength(1);
       expect(result.attendance.going[0]!.name).toBe('Test User');
+      expect(result.attendance.interested).toHaveLength(1);
+      expect(result.attendance.interested[0]!.name).toBe('Alice');
+      expect(result.attendance.notGoing).toHaveLength(1);
+      expect(result.attendance.notGoing[0]!.name).toBe('Bob');
+      expect(result.yourRsvpStatus).toBe('GOING');
+    });
+
+    it('formats polls with voter names and vote counts', async () => {
+      const detail = buildHangoutDetail({
+        polls: [{
+          pollId: 'poll-1',
+          title: 'Where to eat?',
+          description: null,
+          multipleChoice: false,
+          options: [
+            {
+              optionId: 'opt-1', text: 'Pizza', voteCount: 2, userVoted: true,
+              createdBy: 'user-001', structuredValue: null,
+              votes: [
+                { displayName: 'Test User' },
+                { displayName: 'Alice' },
+              ],
+            } as never,
+            {
+              optionId: 'opt-2', text: 'Sushi', voteCount: 1, userVoted: false,
+              createdBy: 'user-002', structuredValue: null,
+              votes: [{ displayName: 'Bob' }],
+            } as never,
+          ],
+          totalVotes: 3,
+          attributeType: null,
+          promotedAt: null,
+          createdAtMillis: 1700000000000,
+        }],
+      });
+      stubRequest(async () => detail);
+
+      const result = await handlers.getHangoutDetail({ hangoutId: 'hangout-detail-001' });
+
+      expect(result.polls).toHaveLength(1);
+      expect(result.polls[0]!.title).toBe('Where to eat?');
+      expect(result.polls[0]!.totalVotes).toBe(3);
+      expect(result.polls[0]!.options).toHaveLength(2);
+      expect(result.polls[0]!.options[0]!.text).toBe('Pizza');
+      expect(result.polls[0]!.options[0]!.votes).toBe(2);
+      expect(result.polls[0]!.options[0]!.youVoted).toBe(true);
+      expect(result.polls[0]!.options[0]!.voterNames).toEqual(['Test User', 'Alice']);
+      expect(result.polls[0]!.options[1]!.voterNames).toEqual(['Bob']);
+    });
+
+    it('formats carpool with riders joined to drivers', async () => {
+      const detail = buildHangoutDetail({
+        hangout: {
+          ...buildHangoutDetail().hangout,
+          carpoolEnabled: true,
+        },
+        cars: [
+          { driverId: 'user-002', driverName: 'Alice', totalCapacity: 4, availableSeats: 2, notes: 'Red car' } as never,
+        ],
+        carRiders: [
+          { driverId: 'user-002', riderName: 'Bob' } as never,
+          { driverId: 'user-002', riderName: 'Carol' } as never,
+        ],
+        needsRide: [
+          { userId: 'user-005', displayName: 'Dave', mainImagePath: null, notes: 'From downtown' },
+        ],
+      });
+      stubRequest(async () => detail);
+
+      const result = await handlers.getHangoutDetail({ hangoutId: 'hangout-detail-001' });
+
+      expect(result.carpool.cars).toHaveLength(1);
+      expect(result.carpool.cars[0]!.driverName).toBe('Alice');
+      expect(result.carpool.cars[0]!.capacity).toBe(4);
+      expect(result.carpool.cars[0]!.seatsOpen).toBe(2);
+      expect(result.carpool.cars[0]!.riders).toEqual(['Bob', 'Carol']);
+      expect(result.carpool.cars[0]!.notes).toBe('Red car');
+      expect(result.carpool.rideRequests).toHaveLength(1);
+      expect(result.carpool.rideRequests[0]!.name).toBe('Dave');
+      expect(result.carpool.rideRequests[0]!.notes).toBe('From downtown');
+    });
+
+    it('formats tickets with three participation types', async () => {
+      const detail = buildHangoutDetail({
+        hangout: {
+          ...buildHangoutDetail().hangout,
+          ticketsRequired: true,
+          ticketLink: 'https://tickets.example.com',
+          discountCode: 'SAVE20',
+        },
+        participations: [
+          { participationId: 'p-1', userId: 'user-001', displayName: 'Test User', mainImagePath: null, type: 'TICKET_PURCHASED', section: 'A', seat: '12', reservationOfferId: null, createdAt: '', updatedAt: '' },
+          { participationId: 'p-2', userId: 'user-002', displayName: 'Alice', mainImagePath: null, type: 'TICKET_NEEDED', section: null, seat: null, reservationOfferId: null, createdAt: '', updatedAt: '' },
+          { participationId: 'p-3', userId: 'user-003', displayName: 'Bob', mainImagePath: null, type: 'TICKET_EXTRA', section: null, seat: null, reservationOfferId: null, createdAt: '', updatedAt: '' },
+        ],
+      });
+      stubRequest(async () => detail);
+
+      const result = await handlers.getHangoutDetail({ hangoutId: 'hangout-detail-001' });
+
+      expect(result.tickets).not.toBeNull();
+      expect(result.tickets!.required).toBe(true);
+      expect(result.tickets!.ticketLink).toBe('https://tickets.example.com');
+      expect(result.tickets!.discountCode).toBe('SAVE20');
+      expect(result.tickets!.haveTickets).toHaveLength(1);
+      expect(result.tickets!.haveTickets[0]).toEqual({ name: 'Test User', section: 'A', seat: '12' });
+      expect(result.tickets!.needTickets).toEqual([{ name: 'Alice' }]);
+      expect(result.tickets!.extraTickets).toEqual([{ name: 'Bob' }]);
+    });
+
+    it('returns null tickets when ticketsRequired is false', async () => {
+      const detail = buildHangoutDetail();
+      stubRequest(async () => detail);
+
+      const result = await handlers.getHangoutDetail({ hangoutId: 'hangout-detail-001' });
+      expect(result.tickets).toBeNull();
+    });
+
+    it('formats time suggestions with suggestor name from attendance', async () => {
+      const detail = buildHangoutDetail({
+        attendance: [
+          buildInterestLevel({ userId: 'user-002', userName: 'Alice', status: 'GOING' }),
+        ],
+        timeSuggestions: [{
+          suggestionId: 'ts-1',
+          hangoutId: 'hangout-detail-001',
+          groupId: 'group-001',
+          suggestedBy: 'user-002',
+          fuzzyTime: 'Saturday afternoon',
+          specificTime: null,
+          supporterIds: ['user-002'],
+          supportCount: 1,
+          status: 'ACTIVE',
+          createdAtMillis: 1700000000000,
+        }],
+      });
+      stubRequest(async () => detail);
+
+      const result = await handlers.getHangoutDetail({ hangoutId: 'hangout-detail-001' });
+
+      expect(result.timeSuggestions).toHaveLength(1);
+      expect(result.timeSuggestions[0]!.fuzzyTime).toBe('Saturday afternoon');
+      expect(result.timeSuggestions[0]!.supportCount).toBe(1);
+      expect(result.timeSuggestions[0]!.suggestedByName).toBe('Alice');
+    });
+
+    it('formats nudges as type strings', async () => {
+      const detail = buildHangoutDetail({
+        nudges: [
+          { type: 'NEEDS_TIME', message: 'Add a time', actionUrl: null },
+          { type: 'NEEDS_LOCATION', message: 'Add a place', actionUrl: null },
+        ],
+      });
+      stubRequest(async () => detail);
+
+      const result = await handlers.getHangoutDetail({ hangoutId: 'hangout-detail-001' });
+      expect(result.nudges).toEqual(['NEEDS_TIME', 'NEEDS_LOCATION']);
     });
 
     it('throws on missing hangoutId', async () => {
@@ -490,6 +721,296 @@ describe('ToolHandlers', () => {
       await expect(
         handlers.parseEventUrl({ url: '' }),
       ).rejects.toThrow('url is required');
+    });
+  });
+
+  // ─── Happy-path tests for remaining tools ──────────────────────────────
+
+  describe('removeRsvp', () => {
+    it('removes RSVP and returns hangout title', async () => {
+      const detail = buildHangoutDetail({
+        hangout: { ...buildHangoutDetail().hangout, hangoutId: 'h-1', title: 'Park Day' },
+      });
+      stubRequest(async (path: string, opts?: { method?: string }) => {
+        if (path === '/hangouts/h-1' && !opts?.method) return detail;
+        if (path === '/hangouts/h-1/interest' && opts?.method === 'DELETE') return undefined;
+        return {};
+      });
+
+      const result = await handlers.removeRsvp({ hangoutId: 'h-1' });
+      expect(result.hangoutId).toBe('h-1');
+      expect(result.title).toBe('Park Day');
+      expect(result.removed).toBe(true);
+    });
+  });
+
+  describe('updateHangout', () => {
+    it('patches and returns success', async () => {
+      stubRequest(async (path: string, opts?: { method?: string }) => {
+        if (opts?.method === 'PATCH') return undefined;
+        // resolveGroupIdForHangout fallback
+        if (path === '/hangouts/h-1') {
+          return buildHangoutDetail({ hangout: { ...buildHangoutDetail().hangout, associatedGroups: ['g-1'] } });
+        }
+        return {};
+      });
+
+      const result = await handlers.updateHangout({ hangoutId: 'h-1', title: 'Updated Title' });
+      expect(result.hangoutId).toBe('h-1');
+      expect(result.success).toBe(true);
+    });
+  });
+
+  describe('createGroup', () => {
+    it('creates group and returns id + name', async () => {
+      stubRequest(async (path: string, opts?: { method?: string }) => {
+        if (path === '/groups' && opts?.method === 'POST') {
+          return buildGroup({ groupId: 'g-new', groupName: 'Camping Crew' });
+        }
+        return {};
+      });
+
+      const result = await handlers.createGroup({ groupName: 'Camping Crew' });
+      expect(result.groupId).toBe('g-new');
+      expect(result.groupName).toBe('Camping Crew');
+    });
+  });
+
+  describe('createPoll', () => {
+    it('creates poll and returns options with IDs', async () => {
+      stubRequest(async (path: string, opts?: { method?: string }) => {
+        if (opts?.method === 'POST') {
+          return { eventId: 'h-1', pollId: 'poll-new', title: 'What trail?' };
+        }
+        // Re-fetch polls for option IDs
+        if (path === '/hangouts/h-1/polls' && !opts?.method) {
+          return [{
+            pollId: 'poll-new', title: 'What trail?', description: null,
+            multipleChoice: false, totalVotes: 0, attributeType: null,
+            promotedAt: null, createdAtMillis: 0,
+            options: [
+              { optionId: 'opt-1', text: 'Bear Peak', voteCount: 0, userVoted: false, createdBy: 'user-001', structuredValue: null },
+              { optionId: 'opt-2', text: 'Sanitas', voteCount: 0, userVoted: false, createdBy: 'user-001', structuredValue: null },
+            ],
+          }];
+        }
+        return {};
+      });
+
+      const result = await handlers.createPoll({
+        hangoutId: 'h-1', title: 'What trail?', options: ['Bear Peak', 'Sanitas'],
+      });
+      expect(result.pollId).toBe('poll-new');
+      expect(result.title).toBe('What trail?');
+      expect(result.options).toHaveLength(2);
+      expect(result.options[0]!.text).toBe('Bear Peak');
+      expect(result.options[0]!.optionId).toBe('opt-1');
+    });
+  });
+
+  describe('voteOnPoll', () => {
+    it('votes and returns updated counts', async () => {
+      stubRequest(async (path: string, opts?: { method?: string }) => {
+        if (opts?.method === 'POST') return undefined;
+        // Re-fetch polls
+        if (path === '/hangouts/h-1/polls') {
+          return [{
+            pollId: 'poll-1', title: 'Trail?', description: null,
+            multipleChoice: false, totalVotes: 3, attributeType: null,
+            promotedAt: null, createdAtMillis: 0,
+            options: [
+              { optionId: 'opt-1', text: 'Bear Peak', voteCount: 2, userVoted: true, createdBy: 'u', structuredValue: null },
+              { optionId: 'opt-2', text: 'Sanitas', voteCount: 1, userVoted: false, createdBy: 'u', structuredValue: null },
+            ],
+          }];
+        }
+        return {};
+      });
+
+      const result = await handlers.voteOnPoll({ hangoutId: 'h-1', pollId: 'poll-1', optionId: 'opt-1' });
+      expect(result.pollId).toBe('poll-1');
+      expect(result.optionText).toBe('Bear Peak');
+      expect(result.totalVotesForOption).toBe(2);
+      expect(result.pollTotalVotes).toBe(3);
+    });
+  });
+
+  describe('addPollOption', () => {
+    it('adds option and returns id + text', async () => {
+      stubRequest(async () => ({
+        eventId: 'h-1', pollId: 'poll-1', optionId: 'opt-new', text: 'Flagstaff',
+      }));
+
+      const result = await handlers.addPollOption({ hangoutId: 'h-1', pollId: 'poll-1', text: 'Flagstaff' });
+      expect(result.optionId).toBe('opt-new');
+      expect(result.text).toBe('Flagstaff');
+      expect(result.pollId).toBe('poll-1');
+    });
+  });
+
+  describe('addMember', () => {
+    it('adds member by phone and returns group name', async () => {
+      stubRequest(async (path: string, opts?: { method?: string }) => {
+        if (opts?.method === 'POST') return undefined;
+        if (path === '/groups') return [buildGroup({ groupId: 'g-1', groupName: 'Weekend Warriors' })];
+        return {};
+      });
+
+      const result = await handlers.addMember({ groupId: 'g-1', phoneNumber: '+15551234567' });
+      expect(result.groupName).toBe('Weekend Warriors');
+      expect(result.added).toBe(true);
+      expect(result.message).toBeTruthy();
+    });
+  });
+
+  describe('generateInviteLink', () => {
+    it('returns invite code and share URL', async () => {
+      stubRequest(async (path: string, opts?: { method?: string }) => {
+        if (opts?.method === 'POST') return { inviteCode: 'ABC123', shareUrl: 'https://hango.app/join/ABC123' };
+        if (path === '/groups') return [buildGroup({ groupId: 'g-1', groupName: 'Fun Group' })];
+        return {};
+      });
+
+      const result = await handlers.generateInviteLink({ groupId: 'g-1' });
+      expect(result.inviteCode).toBe('ABC123');
+      expect(result.shareUrl).toBe('https://hango.app/join/ABC123');
+      expect(result.groupName).toBe('Fun Group');
+    });
+  });
+
+  describe('createIdeaList', () => {
+    it('creates list and returns name + category', async () => {
+      stubRequest(async (path: string, opts?: { method?: string }) => {
+        if (opts?.method === 'POST') {
+          return { ideaListId: 'list-new', name: 'Restaurants', category: 'PLACE', note: null, groupId: 'g-1' };
+        }
+        if (path === '/groups') return [buildGroup({ groupId: 'g-1', groupName: 'Foodies' })];
+        return {};
+      });
+
+      const result = await handlers.createIdeaList({ groupId: 'g-1', name: 'Restaurants', category: 'PLACE' });
+      expect(result.listId).toBe('list-new');
+      expect(result.name).toBe('Restaurants');
+      expect(result.category).toBe('PLACE');
+      expect(result.groupName).toBe('Foodies');
+    });
+  });
+
+  describe('addIdea', () => {
+    it('adds idea and returns name + list name', async () => {
+      stubRequest(async (path: string, opts?: { method?: string }) => {
+        if (opts?.method === 'POST') {
+          return { ideaId: 'idea-new', name: 'Sushi Nakazawa', note: null, interestCount: 0 };
+        }
+        // Fallback fetch for list name
+        if (path.includes('/idea-lists/list-1') && !path.includes('/ideas')) {
+          return { ideaListId: 'list-1', name: 'Restaurant Ideas', category: 'PLACE', note: null, groupId: 'g-1' };
+        }
+        return {};
+      });
+
+      const result = await handlers.addIdea({ groupId: 'g-1', listId: 'list-1', name: 'Sushi Nakazawa' });
+      expect(result.ideaId).toBe('idea-new');
+      expect(result.name).toBe('Sushi Nakazawa');
+      expect(result.listName).toBe('Restaurant Ideas');
+    });
+  });
+
+  describe('toggleIdeaInterest', () => {
+    it('toggles interest and returns updated count', async () => {
+      stubRequest(async () => ({
+        ideaId: 'idea-1', name: 'Bear Peak', note: null, interestCount: 3,
+        interestedUsers: [],
+      }));
+
+      const result = await handlers.toggleIdeaInterest({
+        groupId: 'g-1', listId: 'list-1', ideaId: 'idea-1', interested: true,
+      });
+      expect(result.ideaId).toBe('idea-1');
+      expect(result.youInterested).toBe(true);
+      expect(result.interestCount).toBe(3);
+    });
+  });
+
+  describe('requestRide', () => {
+    it('creates ride request', async () => {
+      stubRequest(async () => undefined);
+
+      const result = await handlers.requestRide({ hangoutId: 'h-1', notes: 'From downtown' });
+      expect(result.hangoutId).toBe('h-1');
+      expect(result.requested).toBe(true);
+    });
+  });
+
+  describe('createTimeSuggestion', () => {
+    it('creates time suggestion when group mapping exists', async () => {
+      // Pre-populate the hangout-to-group mapping via a feed fetch
+      const feed = buildFeedResponse({
+        groupId: 'g-1',
+        withDay: [buildHangout({ hangoutId: 'h-1' })],
+      });
+      stubRequest(async (path: string) => {
+        if (path === '/groups') return [buildGroup({ groupId: 'g-1', groupName: 'Group' })];
+        // createTimeSuggestion POST
+        if (path.includes('/time-suggestions')) {
+          return { suggestionId: 'ts-new', fuzzyTime: 'Saturday afternoon', supportCount: 1 };
+        }
+        return {};
+      });
+      stubGetWithEtag(async () => ({ data: feed, etag: '"e"', notModified: false }));
+
+      // Populate cache so hangout → group mapping exists
+      await handlers.getGroupFeed({ groupId: 'g-1' });
+
+      // Now create the suggestion
+      vi.mocked(HttpClient.prototype.getWithEtag).mockRestore();
+      const result = await handlers.createTimeSuggestion({ hangoutId: 'h-1', fuzzyTime: 'Saturday afternoon' });
+      expect(result.suggestionId).toBe('ts-new');
+      expect(result.fuzzyTime).toBe('Saturday afternoon');
+      expect(result.supportCount).toBe(1);
+    });
+  });
+
+  describe('getIdeaLists', () => {
+    it('returns all lists for a group', async () => {
+      stubRequest(async (path: string) => {
+        if (path.includes('/idea-lists')) {
+          return [
+            { ideaListId: 'l-1', name: 'Restaurants', category: 'PLACE', note: null, groupId: 'g-1', ideas: [{}, {}, {}] },
+            { ideaListId: 'l-2', name: 'Shows', category: 'SHOW', note: null, groupId: 'g-1', ideas: [] },
+          ];
+        }
+        if (path === '/groups') return [buildGroup({ groupId: 'g-1', groupName: 'Fun Group' })];
+        return {};
+      });
+
+      const result = await handlers.getIdeaLists({ groupId: 'g-1' });
+      // All-lists response shape
+      expect('lists' in result).toBe(true);
+      const allLists = result as { groupName: string; lists: Array<{ listId: string; name: string; ideaCount: number }> };
+      expect(allLists.groupName).toBe('Fun Group');
+      expect(allLists.lists).toHaveLength(2);
+      expect(allLists.lists[0]!.name).toBe('Restaurants');
+      expect(allLists.lists[0]!.ideaCount).toBe(3);
+      expect(allLists.lists[1]!.ideaCount).toBe(0);
+    });
+
+    it('returns single list with ideas when listId provided', async () => {
+      stubRequest(async () => ({
+        ideaListId: 'l-1', name: 'Restaurants', category: 'PLACE', note: null, groupId: 'g-1',
+        ideas: [
+          { ideaId: 'i-1', name: 'Sushi Place', note: 'Great omakase', address: '123 Main', rating: 4.8, priceLevel: 3, interestCount: 2, interestedUsers: [{ userId: 'user-001', displayName: 'Test User' }, { userId: 'user-002', displayName: 'Alice' }] },
+        ],
+      }));
+
+      const result = await handlers.getIdeaLists({ groupId: 'g-1', listId: 'l-1' });
+      expect('ideas' in result).toBe(true);
+      const detail = result as { listId: string; ideas: Array<{ ideaId: string; name: string; youInterested: boolean; interestedNames: string[] }> };
+      expect(detail.listId).toBe('l-1');
+      expect(detail.ideas).toHaveLength(1);
+      expect(detail.ideas[0]!.name).toBe('Sushi Place');
+      expect(detail.ideas[0]!.youInterested).toBe(true); // user-001 is in interestedUsers
+      expect(detail.ideas[0]!.interestedNames).toEqual(['Test User', 'Alice']);
     });
   });
 
@@ -608,6 +1129,23 @@ describe('ToolHandlers', () => {
         error: true,
         message: 'Unknown tool: nonexistent_tool. This tool is not yet implemented.',
       });
+    });
+
+    it('catches HangoApiError and returns conversational error', async () => {
+      const { HangoApiError } = await import('./http-client.js');
+      stubRequest(async () => {
+        throw new HangoApiError(401, 'UNAUTHORIZED', 'Your session has expired. Please log in via the app.');
+      });
+
+      const result = await handlers.dispatch('list_groups', {}) as { error: boolean; message: string };
+      expect(result.error).toBe(true);
+      expect(result.message).toBe('Your session has expired. Please log in via the app.');
+    });
+
+    it('catches validation errors and returns error object', async () => {
+      const result = await handlers.dispatch('create_hangout', { groupId: '', title: '' }) as { error: boolean; message: string };
+      expect(result.error).toBe(true);
+      expect(result.message).toContain('groupId is required');
     });
   });
 });

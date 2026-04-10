@@ -73,6 +73,20 @@ beforeAll(async () => {
   jwt = loginBody.accessToken;
   userId = loginBody.user.id;
   displayName = loginBody.user.displayName;
+
+  // Pre-fetch first group so tests don't depend on ordering
+  const groupsRes = await fetch(`${BASE_URL}/groups`, {
+    headers: {
+      Authorization: `Bearer ${jwt}`,
+      'Content-Type': 'application/json',
+      'X-App-Version': '2.1.0',
+      'X-Client-Type': 'mobile',
+    },
+  });
+  const groups = await groupsRes.json();
+  if (groupsRes.ok && Array.isArray(groups) && groups.length > 0) {
+    firstGroupId = groups[0].groupId;
+  }
 });
 
 afterAll(async () => {
