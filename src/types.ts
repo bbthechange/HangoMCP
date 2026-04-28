@@ -170,7 +170,6 @@ export interface ApiHangoutDetail {
   hostAtPlaceDisplayName: string | null;
   hostAtPlaceImagePath: string | null;
   momentum: Momentum | null;
-  timeSuggestions: ApiTimeSuggestionDTO[];
   suggestedAttributes: Record<string, unknown>;
   nudges: Array<{ type: string; message: string; actionUrl: string | null }>;
 }
@@ -187,11 +186,15 @@ export interface ApiPollDTO {
     userVoted: boolean;
     createdBy: string;
     structuredValue: string | null;
+    timeInput: TimeInfo | null;
     votes: Array<{ userId: string; voteType: string; displayName: string | null }>;
   }>;
   totalVotes: number;
   attributeType: string | null;
+  isActive: boolean;
   promotedAt: number | null;
+  viewable?: boolean;
+  canAddOptions?: boolean;
   createdAtMillis: number;
 }
 
@@ -230,19 +233,6 @@ export interface ApiParticipationDTO {
   reservationOfferId: string | null;
   createdAt: string;
   updatedAt: string;
-}
-
-export interface ApiTimeSuggestionDTO {
-  suggestionId: string;
-  hangoutId: string;
-  groupId: string;
-  suggestedBy: string;
-  fuzzyTime: string;
-  specificTime: number | null;
-  supporterIds: string[];
-  supportCount: number;
-  status: string;
-  createdAtMillis: number;
 }
 
 export interface ApiCreateHangoutResponse {
@@ -400,10 +390,16 @@ export interface CreateGroupInput {
 }
 
 // #11 create_poll
+export type PollAttributeType = 'TIME' | 'LOCATION' | 'DESCRIPTION';
+export interface PollOptionInput {
+  text?: string;
+  timeInput?: TimeInfo;
+}
 export interface CreatePollInput {
   hangoutId: string;
   title: string;
-  options?: string[];
+  attributeType?: PollAttributeType;
+  options?: PollOptionInput[];
   multipleChoice?: boolean;
 }
 
@@ -418,7 +414,8 @@ export interface VoteOnPollInput {
 export interface AddPollOptionInput {
   hangoutId: string;
   pollId: string;
-  text: string;
+  text?: string;
+  timeInput?: TimeInfo;
 }
 
 // #14 create_idea_list
@@ -483,13 +480,6 @@ export interface UpdateTicketStatusInput {
 // #22 parse_event_url
 export interface ParseEventUrlInput {
   url: string;
-}
-
-// #23 create_time_suggestion
-export interface CreateTimeSuggestionInput {
-  hangoutId: string;
-  fuzzyTime: string;
-  specificTime?: number;
 }
 
 // ─── Tool Output Types ───────────────────────────────────────────────────────
@@ -589,10 +579,12 @@ export interface GetHangoutDetailOutput {
     extraTickets: Array<{ name: string }>;
   } | null;
   timeSuggestions: Array<{
-    suggestionId: string;
-    fuzzyTime: string;
+    pollId: string;
+    optionId: string;
+    when: string;
     supportCount: number;
-    suggestedByName: string;
+    supporterNames: string[];
+    youSupported: boolean;
   }>;
   nudges: string[];
 }
@@ -676,6 +668,7 @@ export interface CreatePollOutput {
   pollId: string;
   hangoutId: string;
   title: string;
+  attributeType: PollAttributeType | null;
   options: Array<{ optionId: string; text: string }>;
 }
 
@@ -763,13 +756,6 @@ export interface ParseEventUrlOutput {
   location: Address | null;
   ticketLink: string | null;
   hasTickets: boolean;
-}
-
-// #23 create_time_suggestion
-export interface CreateTimeSuggestionOutput {
-  suggestionId: string;
-  fuzzyTime: string;
-  supportCount: number;
 }
 
 // ─── Internal Types ──────────────────────────────────────────────────────────

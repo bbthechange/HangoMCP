@@ -404,35 +404,6 @@ export const TOOL_SCHEMAS = {
     },
   },
 
-  create_time_suggestion: {
-    name: 'create_time_suggestion',
-    description:
-      "Suggest a fuzzy time for a hangout that doesn't have a time yet. Other group members can support the suggestion. Use build_time first if converting from natural language — but note this tool takes a fuzzyTime enum value, not a full timeInfo object. Only use for hangouts without a set time. To set a specific time on a hangout, use update_hangout instead.",
-    inputSchema: {
-      type: 'object' as const,
-      properties: {
-        hangoutId: {
-          type: 'string',
-          description: 'UUID of the hangout',
-        },
-        fuzzyTime: {
-          type: 'string',
-          enum: [
-            'TONIGHT', 'TOMORROW', 'THIS_WEEKEND', 'NEXT_WEEKEND',
-            'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY',
-            'NEXT_WEEK', 'IN_TWO_WEEKS', 'THIS_MONTH', 'SOMETIME_SOON',
-          ],
-          description: 'Fuzzy time suggestion',
-        },
-        specificTime: {
-          type: 'number',
-          description:
-            'Optional Unix timestamp (seconds) for a more specific suggestion within the fuzzy range',
-        },
-      },
-      required: ['hangoutId', 'fuzzyTime'],
-    },
-  },
   get_hangout_detail: {
     name: 'get_hangout_detail',
     description:
@@ -538,7 +509,7 @@ export const TOOL_SCHEMAS = {
   create_poll: {
     name: 'create_poll',
     description:
-      'Create a poll on a hangout. Optionally include initial options. If no options are provided, the group can suggest them.',
+      "Create a poll on a hangout, or start a new suggestion list (the GUI presents polls as suggestion lists). Use this whenever the user wants to 'make a suggestion', 'suggest a time', 'suggest a place', 'put up options', 'start a vote', or any phrasing that proposes alternatives for the group to weigh in on. Also use it for traditional polls.\n\nFor a TIME poll (proposing one or more times for an undecided hangout), set attributeType='TIME' and pass each option as { timeInput: TimeInfo }. Use build_time first to construct each timeInput from natural language. TIME polls are auto-multipleChoice.\n\nFor a regular text poll, omit attributeType and pass options as { text: '...' }.\n\nIf the hangout already has an active TIME poll, use add_poll_option to add another time suggestion to it instead of calling this tool.",
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -548,16 +519,45 @@ export const TOOL_SCHEMAS = {
         },
         title: {
           type: 'string',
-          description: 'Poll question, 1-200 characters',
+          description: "Poll question, 1-200 characters. For TIME polls a generic title like 'Vote on a time' works.",
+        },
+        attributeType: {
+          type: 'string',
+          enum: ['TIME', 'LOCATION', 'DESCRIPTION'],
+          description:
+            "Optional poll kind. Use 'TIME' to propose times for an undecided hangout (each option needs timeInput, not text). Omit for a generic text poll.",
         },
         options: {
           type: 'array',
-          items: { type: 'string' },
-          description: 'Initial poll options. Each 1-100 characters.',
+          description:
+            "Initial options. For TIME polls each option must have { timeInput }. For other polls each option must have { text } (1-100 chars).",
+          items: {
+            type: 'object',
+            properties: {
+              text: {
+                type: 'string',
+                description: 'Option text for non-TIME polls (1-100 chars).',
+              },
+              timeInput: {
+                type: 'object',
+                description:
+                  'Time for a TIME poll option. Use EITHER {periodGranularity, periodStart} for fuzzy times OR {startTime, endTime} for exact times. Build via build_time.',
+                properties: {
+                  periodGranularity: {
+                    type: 'string',
+                    enum: ['morning', 'afternoon', 'evening', 'night', 'day', 'weekend'],
+                  },
+                  periodStart: { type: 'string', description: 'ISO 8601 datetime with timezone offset' },
+                  startTime: { type: 'string', description: 'ISO 8601 datetime with timezone offset' },
+                  endTime: { type: 'string', description: 'ISO 8601 datetime with timezone offset' },
+                },
+              },
+            },
+          },
         },
         multipleChoice: {
           type: 'boolean',
-          description: 'Allow multiple votes per person. Default false.',
+          description: 'Allow multiple votes per person. Default false. Ignored for TIME polls (always multi).',
         },
       },
       required: ['hangoutId', 'title'],
@@ -567,7 +567,7 @@ export const TOOL_SCHEMAS = {
   vote_on_poll: {
     name: 'vote_on_poll',
     description:
-      "Cast a vote on a poll option. You need the hangoutId, pollId, and optionId — get these from get_hangout_detail which includes polls with their options and IDs. To add a new option and vote on it, first use add_poll_option, then vote on the returned optionId.",
+      "Cast a vote on a poll option, or '+1 / support' a time suggestion (TIME polls — see get_hangout_detail.timeSuggestions). Voting twice for the same option is idempotent. Use this when the user says 'I'll go with that one', 'support this time', '+1 the Saturday option', or 'vote for X'. To add a new option and vote on it, first call add_poll_option, then vote on the returned optionId.",
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -591,7 +591,7 @@ export const TOOL_SCHEMAS = {
   add_poll_option: {
     name: 'add_poll_option',
     description:
-      'Add a new option to an existing poll. Returns the new optionId which you can then use with vote_on_poll.',
+      "Add a new option to an existing poll/suggestion list — i.e., 'make another suggestion', 'add another time', 'propose another option', or 'add an option to a poll'. The GUI presents polls as suggestion lists, so primary user phrasing will be about suggesting, not voting.\n\nFor a TIME poll (visible in get_hangout_detail's timeSuggestions array), pass timeInput. Use build_time first to convert natural language. For a regular text poll, pass text.\n\nReturns the new optionId, which can be passed to vote_on_poll if the user also wants to support their own suggestion.",
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -601,14 +601,28 @@ export const TOOL_SCHEMAS = {
         },
         pollId: {
           type: 'string',
-          description: 'UUID of the poll',
+          description: 'UUID of the poll. For a time suggestion, this is the pollId from get_hangout_detail.timeSuggestions[].',
         },
         text: {
           type: 'string',
-          description: 'Option text, 1-100 characters',
+          description: 'Option text for a regular (non-TIME) poll, 1-100 characters. Omit for TIME polls.',
+        },
+        timeInput: {
+          type: 'object',
+          description:
+            "Required for TIME polls (time suggestions). Use EITHER {periodGranularity, periodStart} for fuzzy times OR {startTime, endTime} for exact times. Build via build_time. Omit for non-TIME polls.",
+          properties: {
+            periodGranularity: {
+              type: 'string',
+              enum: ['morning', 'afternoon', 'evening', 'night', 'day', 'weekend'],
+            },
+            periodStart: { type: 'string', description: 'ISO 8601 datetime with timezone offset' },
+            startTime: { type: 'string', description: 'ISO 8601 datetime with timezone offset' },
+            endTime: { type: 'string', description: 'ISO 8601 datetime with timezone offset' },
+          },
         },
       },
-      required: ['hangoutId', 'pollId', 'text'],
+      required: ['hangoutId', 'pollId'],
     },
   },
 

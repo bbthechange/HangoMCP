@@ -31,7 +31,6 @@ import type {
   ApiIdeaListDTO,
   ApiParticipationDTO,
   ApiPollDTO,
-  ApiTimeSuggestionDTO,
   ApiWatchPartySeriesDTO,
   BuildTimeInput,
   BuildTimeOutput,
@@ -43,8 +42,6 @@ import type {
   CreateIdeaListOutput,
   CreatePollInput,
   CreatePollOutput,
-  CreateTimeSuggestionInput,
-  CreateTimeSuggestionOutput,
   GenerateInviteLinkInput,
   GenerateInviteLinkOutput,
   GetGroupFeedInput,
@@ -68,6 +65,7 @@ import type {
   SessionContext,
   SetRsvpInput,
   SetRsvpOutput,
+  TimeInfo,
   ToggleIdeaInterestInput,
   ToggleIdeaInterestOutput,
   UpdateHangoutInput,
@@ -602,35 +600,6 @@ export class ToolHandlers {
     };
   }
 
-  // ─── create_time_suggestion (#23) ────────────────────────────────────────
-
-  async createTimeSuggestion(input: CreateTimeSuggestionInput): Promise<CreateTimeSuggestionOutput> {
-    if (!input.hangoutId) throw new Error('hangoutId is required.');
-    if (!input.fuzzyTime) throw new Error('fuzzyTime is required.');
-
-    // Resolve groupId from hangoutId mapping
-    const groupId = await this.resolveGroupIdForHangout(input.hangoutId);
-    if (!groupId) {
-      throw new Error(
-        'Could not determine which group this hangout belongs to. Try viewing the group feed first with get_group_feed.',
-      );
-    }
-
-    const body: Record<string, unknown> = { fuzzyTime: input.fuzzyTime };
-    if (input.specificTime !== undefined) body.specificTime = input.specificTime;
-
-    const result = await this.http.request<ApiTimeSuggestionDTO>(
-      `/groups/${groupId}/hangouts/${input.hangoutId}/time-suggestions`,
-      { method: 'POST', body },
-    );
-
-    return {
-      suggestionId: result.suggestionId,
-      fuzzyTime: result.fuzzyTime,
-      supportCount: result.supportCount ?? 0,
-    };
-  }
-
   // ─── get_hangout_detail (#3) — Biggest response formatter ────────────────
 
   async getHangoutDetail(input: GetHangoutDetailInput): Promise<GetHangoutDetailOutput> {
@@ -680,21 +649,27 @@ export class ToolHandlers {
       }
     }
 
-    // Format polls
-    const polls = (detail.polls ?? []).map((poll: ApiPollDTO) => ({
-      pollId: poll.pollId,
-      title: poll.title,
-      options: poll.options.map(opt => ({
-        optionId: opt.optionId,
-        text: opt.text,
-        votes: opt.voteCount,
-        voterNames: (opt.votes ?? [])
-          .filter(v => v.displayName)
-          .map(v => v.displayName!),
-        youVoted: opt.userVoted,
-      })),
-      totalVotes: poll.totalVotes,
-    }));
+    // Filter out non-viewable polls; split TIME polls into a derived
+    // "proposed times" list, leave the rest as generic polls.
+    const visiblePolls = (detail.polls ?? []).filter(
+      (p: ApiPollDTO) => p.viewable !== false,
+    );
+    const polls = visiblePolls
+      .filter(p => p.attributeType !== 'TIME')
+      .map((poll: ApiPollDTO) => ({
+        pollId: poll.pollId,
+        title: poll.title,
+        options: poll.options.map(opt => ({
+          optionId: opt.optionId,
+          text: opt.text,
+          votes: opt.voteCount,
+          voterNames: (opt.votes ?? [])
+            .filter(v => v.displayName)
+            .map(v => v.displayName!),
+          youVoted: opt.userVoted,
+        })),
+        totalVotes: poll.totalVotes,
+      }));
 
     // Format carpool — detail response has flat cars + carRiders joined by driverId
     const ridersByDriver = new Map<string, string[]>();
@@ -750,17 +725,26 @@ export class ToolHandlers {
       };
     }
 
-    // Format time suggestions
-    const timeSuggestions = (detail.timeSuggestions ?? []).map(ts => {
-      // Resolve suggestedBy name from attendance
-      const suggestor = (detail.attendance ?? []).find(a => a.userId === ts.suggestedBy);
-      return {
-        suggestionId: ts.suggestionId,
-        fuzzyTime: ts.fuzzyTime,
-        supportCount: ts.supportCount,
-        suggestedByName: suggestor?.userName ?? 'Unknown',
-      };
-    });
+    // Derive proposed times from active TIME polls. Each option becomes
+    // one suggestion, with the time formatted from its timeInput. supporterIds
+    // are reflected via voteCount + userVoted; voter display names come from
+    // the option's votes array when populated.
+    const timeSuggestions = visiblePolls
+      .filter(p => p.attributeType === 'TIME' && p.isActive)
+      .flatMap(poll =>
+        poll.options.map(opt => ({
+          pollId: poll.pollId,
+          optionId: opt.optionId,
+          when: opt.timeInput
+            ? formatTimeInfo(opt.timeInput, this.ctx.timezone) ?? opt.text
+            : opt.text,
+          supportCount: opt.voteCount,
+          supporterNames: (opt.votes ?? [])
+            .filter(v => v.displayName)
+            .map(v => v.displayName!),
+          youSupported: opt.userVoted,
+        })),
+      );
 
     // Format nudges as string array of types
     const nudges = (detail.nudges ?? []).map(n => n.type);
@@ -882,11 +866,34 @@ export class ToolHandlers {
     if (!input.hangoutId) throw new Error('hangoutId is required.');
     if (!input.title || input.title.trim().length === 0) throw new Error('title is required.');
 
+    const isTimePoll = input.attributeType === 'TIME';
+    if (isTimePoll) {
+      if (!input.options || input.options.length === 0) {
+        throw new Error('TIME polls require at least one option with a timeInput.');
+      }
+      for (const opt of input.options) {
+        if (!opt.timeInput) {
+          throw new Error('Every TIME poll option must include a timeInput. Use build_time first.');
+        }
+      }
+    } else if (input.options) {
+      for (const opt of input.options) {
+        if (!opt.text || opt.text.trim().length === 0) {
+          throw new Error('Every poll option must include non-empty text (or set attributeType=TIME and provide timeInput).');
+        }
+      }
+    }
+
     const body: Record<string, unknown> = {
       title: input.title,
-      multipleChoice: input.multipleChoice ?? false,
+      multipleChoice: isTimePoll ? true : input.multipleChoice ?? false,
     };
-    if (input.options) body.options = input.options;
+    if (input.attributeType) body.attributeType = input.attributeType;
+    if (input.options) {
+      body.options = isTimePoll
+        ? input.options.map(o => ({ timeInput: o.timeInput }))
+        : input.options.map(o => o.text ?? '').filter(t => t.length > 0);
+    }
 
     const result = await this.http.request<{
       eventId: string;
@@ -904,9 +911,12 @@ export class ToolHandlers {
       pollId: result.pollId,
       hangoutId: input.hangoutId,
       title: result.title,
+      attributeType: (createdPoll?.attributeType as CreatePollOutput['attributeType']) ?? input.attributeType ?? null,
       options: (createdPoll?.options ?? []).map(o => ({
         optionId: o.optionId,
-        text: o.text,
+        text: o.timeInput
+          ? formatTimeInfo(o.timeInput, this.ctx.timezone) ?? o.text
+          : o.text,
       })),
     };
   }
@@ -943,21 +953,36 @@ export class ToolHandlers {
   async addPollOption(input: AddPollOptionInput): Promise<AddPollOptionOutput> {
     if (!input.hangoutId) throw new Error('hangoutId is required.');
     if (!input.pollId) throw new Error('pollId is required.');
-    if (!input.text || input.text.trim().length === 0) throw new Error('text is required.');
+    const hasText = input.text && input.text.trim().length > 0;
+    const hasTimeInput = !!input.timeInput;
+    if (!hasText && !hasTimeInput) {
+      throw new Error(
+        'Provide either text (for a regular poll) or timeInput (for a time-suggestion poll). Use build_time first to construct timeInput.',
+      );
+    }
+
+    const body: Record<string, unknown> = hasTimeInput
+      ? { timeInput: input.timeInput }
+      : { text: input.text };
 
     const result = await this.http.request<{
       eventId: string;
       pollId: string;
       optionId: string;
       text: string;
+      timeInput?: TimeInfo | null;
     }>(`/hangouts/${input.hangoutId}/polls/${input.pollId}/options`, {
       method: 'POST',
-      body: { text: input.text },
+      body,
     });
+
+    const displayText = result.timeInput
+      ? formatTimeInfo(result.timeInput, this.ctx.timezone) ?? result.text
+      : result.text;
 
     return {
       optionId: result.optionId,
-      text: result.text,
+      text: displayText,
       pollId: result.pollId,
     };
   }
@@ -1079,8 +1104,6 @@ export class ToolHandlers {
           return await this.updateTicketStatus(args as unknown as UpdateTicketStatusInput);
         case 'parse_event_url':
           return await this.parseEventUrl(args as unknown as ParseEventUrlInput);
-        case 'create_time_suggestion':
-          return await this.createTimeSuggestion(args as unknown as CreateTimeSuggestionInput);
         case 'get_hangout_detail':
           return await this.getHangoutDetail(args as unknown as GetHangoutDetailInput);
         case 'update_hangout':

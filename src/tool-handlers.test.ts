@@ -542,6 +542,7 @@ describe('ToolHandlers', () => {
           ],
           totalVotes: 3,
           attributeType: null,
+          isActive: true,
           promotedAt: null,
           createdAtMillis: 1700000000000,
         }],
@@ -629,22 +630,36 @@ describe('ToolHandlers', () => {
       expect(result.tickets).toBeNull();
     });
 
-    it('formats time suggestions with suggestor name from attendance', async () => {
+    it('derives time suggestions from active TIME polls and formats from timeInput', async () => {
       const detail = buildHangoutDetail({
         attendance: [
           buildInterestLevel({ userId: 'user-002', userName: 'Alice', status: 'GOING' }),
         ],
-        timeSuggestions: [{
-          suggestionId: 'ts-1',
-          hangoutId: 'hangout-detail-001',
-          groupId: 'group-001',
-          suggestedBy: 'user-002',
-          fuzzyTime: 'Saturday afternoon',
-          specificTime: null,
-          supporterIds: ['user-002'],
-          supportCount: 1,
-          status: 'ACTIVE',
+        polls: [{
+          pollId: 'poll-time-1',
+          title: 'Vote on a time',
+          description: null,
+          multipleChoice: true,
+          attributeType: 'TIME',
+          isActive: true,
+          promotedAt: null,
+          viewable: true,
+          canAddOptions: true,
           createdAtMillis: 1700000000000,
+          totalVotes: 1,
+          options: [{
+            optionId: 'opt-time-1',
+            text: 'Sat afternoon',
+            voteCount: 1,
+            userVoted: false,
+            createdBy: 'user-002',
+            structuredValue: null,
+            timeInput: {
+              periodGranularity: 'afternoon',
+              periodStart: '2026-05-02T12:00:00-07:00',
+            },
+            votes: [{ userId: 'user-002', voteType: 'YES', displayName: 'Alice' }],
+          }],
         }],
       });
       stubRequest(async () => detail);
@@ -652,9 +667,65 @@ describe('ToolHandlers', () => {
       const result = await handlers.getHangoutDetail({ hangoutId: 'hangout-detail-001' });
 
       expect(result.timeSuggestions).toHaveLength(1);
-      expect(result.timeSuggestions[0]!.fuzzyTime).toBe('Saturday afternoon');
-      expect(result.timeSuggestions[0]!.supportCount).toBe(1);
-      expect(result.timeSuggestions[0]!.suggestedByName).toBe('Alice');
+      const suggestion = result.timeSuggestions[0]!;
+      expect(suggestion.pollId).toBe('poll-time-1');
+      expect(suggestion.optionId).toBe('opt-time-1');
+      expect(suggestion.supportCount).toBe(1);
+      expect(suggestion.supporterNames).toEqual(['Alice']);
+      expect(suggestion.youSupported).toBe(false);
+      expect(suggestion.when).toBeTruthy();
+      expect(suggestion.when).not.toBe('Sat afternoon'); // formatted from timeInput, not server text
+      // TIME polls should not appear in the generic polls list
+      expect(result.polls).toHaveLength(0);
+    });
+
+    it('skips non-viewable polls and inactive TIME polls in suggestions', async () => {
+      const detail = buildHangoutDetail({
+        polls: [
+          {
+            pollId: 'poll-hidden',
+            title: 'Hidden',
+            description: null,
+            multipleChoice: false,
+            attributeType: null,
+            isActive: true,
+            promotedAt: null,
+            viewable: false,
+            canAddOptions: true,
+            createdAtMillis: 1700000000000,
+            totalVotes: 0,
+            options: [],
+          },
+          {
+            pollId: 'poll-time-adopted',
+            title: 'Vote on a time',
+            description: null,
+            multipleChoice: true,
+            attributeType: 'TIME',
+            isActive: false,
+            promotedAt: 1700000099999,
+            viewable: true,
+            canAddOptions: false,
+            createdAtMillis: 1700000000000,
+            totalVotes: 2,
+            options: [{
+              optionId: 'opt-x',
+              text: 'Adopted',
+              voteCount: 2,
+              userVoted: true,
+              createdBy: 'user-002',
+              structuredValue: null,
+              timeInput: { startTime: '2026-05-02T19:00:00-07:00' },
+              votes: [],
+            }],
+          },
+        ],
+      });
+      stubRequest(async () => detail);
+
+      const result = await handlers.getHangoutDetail({ hangoutId: 'hangout-detail-001' });
+      expect(result.polls).toHaveLength(0);
+      expect(result.timeSuggestions).toHaveLength(0);
     });
 
     it('formats nudges as type strings', async () => {
@@ -787,10 +858,10 @@ describe('ToolHandlers', () => {
           return [{
             pollId: 'poll-new', title: 'What trail?', description: null,
             multipleChoice: false, totalVotes: 0, attributeType: null,
-            promotedAt: null, createdAtMillis: 0,
+            isActive: true, promotedAt: null, createdAtMillis: 0,
             options: [
-              { optionId: 'opt-1', text: 'Bear Peak', voteCount: 0, userVoted: false, createdBy: 'user-001', structuredValue: null },
-              { optionId: 'opt-2', text: 'Sanitas', voteCount: 0, userVoted: false, createdBy: 'user-001', structuredValue: null },
+              { optionId: 'opt-1', text: 'Bear Peak', voteCount: 0, userVoted: false, createdBy: 'user-001', structuredValue: null, timeInput: null, votes: [] },
+              { optionId: 'opt-2', text: 'Sanitas', voteCount: 0, userVoted: false, createdBy: 'user-001', structuredValue: null, timeInput: null, votes: [] },
             ],
           }];
         }
@@ -798,7 +869,8 @@ describe('ToolHandlers', () => {
       });
 
       const result = await handlers.createPoll({
-        hangoutId: 'h-1', title: 'What trail?', options: ['Bear Peak', 'Sanitas'],
+        hangoutId: 'h-1', title: 'What trail?',
+        options: [{ text: 'Bear Peak' }, { text: 'Sanitas' }],
       });
       expect(result.pollId).toBe('poll-new');
       expect(result.title).toBe('What trail?');
@@ -817,10 +889,10 @@ describe('ToolHandlers', () => {
           return [{
             pollId: 'poll-1', title: 'Trail?', description: null,
             multipleChoice: false, totalVotes: 3, attributeType: null,
-            promotedAt: null, createdAtMillis: 0,
+            isActive: true, promotedAt: null, createdAtMillis: 0,
             options: [
-              { optionId: 'opt-1', text: 'Bear Peak', voteCount: 2, userVoted: true, createdBy: 'u', structuredValue: null },
-              { optionId: 'opt-2', text: 'Sanitas', voteCount: 1, userVoted: false, createdBy: 'u', structuredValue: null },
+              { optionId: 'opt-1', text: 'Bear Peak', voteCount: 2, userVoted: true, createdBy: 'u', structuredValue: null, timeInput: null, votes: [] },
+              { optionId: 'opt-2', text: 'Sanitas', voteCount: 1, userVoted: false, createdBy: 'u', structuredValue: null, timeInput: null, votes: [] },
             ],
           }];
         }
@@ -942,35 +1014,6 @@ describe('ToolHandlers', () => {
     });
   });
 
-  describe('createTimeSuggestion', () => {
-    it('creates time suggestion when group mapping exists', async () => {
-      // Pre-populate the hangout-to-group mapping via a feed fetch
-      const feed = buildFeedResponse({
-        groupId: 'g-1',
-        withDay: [buildHangout({ hangoutId: 'h-1' })],
-      });
-      stubRequest(async (path: string) => {
-        if (path === '/groups') return [buildGroup({ groupId: 'g-1', groupName: 'Group' })];
-        // createTimeSuggestion POST
-        if (path.includes('/time-suggestions')) {
-          return { suggestionId: 'ts-new', fuzzyTime: 'Saturday afternoon', supportCount: 1 };
-        }
-        return {};
-      });
-      stubGetWithEtag(async () => ({ data: feed, etag: '"e"', notModified: false }));
-
-      // Populate cache so hangout → group mapping exists
-      await handlers.getGroupFeed({ groupId: 'g-1' });
-
-      // Now create the suggestion
-      vi.mocked(HttpClient.prototype.getWithEtag).mockRestore();
-      const result = await handlers.createTimeSuggestion({ hangoutId: 'h-1', fuzzyTime: 'Saturday afternoon' });
-      expect(result.suggestionId).toBe('ts-new');
-      expect(result.fuzzyTime).toBe('Saturday afternoon');
-      expect(result.supportCount).toBe(1);
-    });
-  });
-
   describe('getIdeaLists', () => {
     it('returns all lists for a group', async () => {
       stubRequest(async (path: string) => {
@@ -1047,10 +1090,10 @@ describe('ToolHandlers', () => {
       ).rejects.toThrow('pollId is required');
     });
 
-    it('addPollOption throws on empty text', async () => {
+    it('addPollOption throws when neither text nor timeInput is provided', async () => {
       await expect(
         handlers.addPollOption({ hangoutId: 'h-1', pollId: 'p-1', text: '' }),
-      ).rejects.toThrow('text is required');
+      ).rejects.toThrow(/text.*timeInput|timeInput.*text/);
     });
 
     it('addMember throws when neither phone nor userId', async () => {
@@ -1081,18 +1124,6 @@ describe('ToolHandlers', () => {
       await expect(
         handlers.updateHangout({ hangoutId: '' }),
       ).rejects.toThrow('hangoutId is required');
-    });
-
-    it('createTimeSuggestion throws on missing hangoutId', async () => {
-      await expect(
-        handlers.createTimeSuggestion({ hangoutId: '', fuzzyTime: 'Friday' }),
-      ).rejects.toThrow('hangoutId is required');
-    });
-
-    it('createTimeSuggestion throws on missing fuzzyTime', async () => {
-      await expect(
-        handlers.createTimeSuggestion({ hangoutId: 'h-1', fuzzyTime: '' }),
-      ).rejects.toThrow('fuzzyTime is required');
     });
 
     it('toggleIdeaInterest throws on missing ideaId', async () => {

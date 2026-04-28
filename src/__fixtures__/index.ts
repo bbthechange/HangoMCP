@@ -211,7 +211,6 @@ export function buildHangoutDetail(overrides?: Partial<ApiHangoutDetail>): ApiHa
     hostAtPlaceDisplayName: null,
     hostAtPlaceImagePath: null,
     momentum: buildMomentum(),
-    timeSuggestions: [],
     suggestedAttributes: {},
     nudges: [],
     ...overrides,
