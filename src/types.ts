@@ -762,6 +762,8 @@ export interface ParseEventUrlOutput {
 
 export interface SessionContext {
   jwt: string;
+  /** Refresh token, if any. Used by HttpClient to auto-refresh on 401. */
+  refreshToken?: string;
   userId: string;
   displayName: string;
   timezone: string;

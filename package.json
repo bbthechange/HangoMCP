@@ -2,8 +2,31 @@
   "name": "hango-mcp-server",
   "version": "1.0.0",
   "description": "Hango MCP Server - Model Context Protocol server for Hango social planning app",
+  "mcpName": "io.github.bbthechange/hango-mcp-server",
   "main": "dist/index.js",
   "type": "module",
+  "license": "MIT",
+  "author": "Brian Butler",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "hango",
+    "social-planning",
+    "hangouts",
+    "claude",
+    "ai"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bbthechange/HangoMCP.git"
+  },
+  "homepage": "https://github.com/bbthechange/HangoMCP#readme",
+  "bugs": {
+    "url": "https://github.com/bbthechange/HangoMCP/issues"
+  },
+  "bin": {
+    "hango-mcp": "dist/index.js"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
@@ -13,7 +36,11 @@
     "test:e2e": "vitest run --project e2e"
   },
   "dependencies": {
+    "@inquirer/prompts": "^7.3.0",
     "@modelcontextprotocol/sdk": "^1.12.1",
+    "@napi-rs/keyring": "^1.1.6",
+    "commander": "^13.0.0",
+    "env-paths": "^3.0.0",
     "luxon": "^3.5.0"
   },
   "devDependencies": {
