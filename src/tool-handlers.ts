@@ -12,7 +12,7 @@
 import { DateTime } from 'luxon';
 import { FeedCache } from './feed-cache.js';
 import { formatGroupFeed, formatTimeInfo, computeAttendance, findUserRsvp } from './formatters.js';
-import { HangoApiError, HttpClient } from './http-client.js';
+import { HangoApiError, HttpClient, type AuthRefreshHooks } from './http-client.js';
 import { parseNaturalTime } from './time-parser.js';
 import type {
   AddIdeaInput,
@@ -83,9 +83,9 @@ export class ToolHandlers {
   /** Cache group list for name lookups. */
   private groupCache: Array<{ groupId: string; groupName: string }> | null = null;
 
-  constructor(ctx: SessionContext) {
+  constructor(ctx: SessionContext, auth?: AuthRefreshHooks) {
     this.ctx = ctx;
-    this.http = new HttpClient(ctx);
+    this.http = new HttpClient(ctx, auth);
     this.feedCache = new FeedCache();
   }
 
@@ -270,12 +270,12 @@ export class ToolHandlers {
         name: list.name,
         category: list.category,
         ideas: (list.ideas ?? []).map(idea => ({
-          ideaId: idea.ideaId ?? (idea as Record<string, unknown>).id as string,
+          ideaId: idea.ideaId ?? (idea as unknown as Record<string, unknown>).id as string,
           name: idea.name,
           note: idea.note,
           address: idea.address,
-          rating: idea.rating ?? (idea as Record<string, unknown>).cachedRating as number | null,
-          priceLevel: idea.priceLevel ?? (idea as Record<string, unknown>).cachedPriceLevel as number | null,
+          rating: idea.rating ?? (idea as unknown as Record<string, unknown>).cachedRating as number | null,
+          priceLevel: idea.priceLevel ?? (idea as unknown as Record<string, unknown>).cachedPriceLevel as number | null,
           interestCount: idea.interestCount ?? 0,
           interestedNames: (idea.interestedUsers ?? []).map(u => u.displayName),
           youInterested: idea.interestedUsers?.some(u => u.userId === this.ctx.userId) ?? false,
@@ -291,7 +291,7 @@ export class ToolHandlers {
     return {
       groupName,
       lists: lists.map(l => ({
-        listId: l.ideaListId ?? (l as Record<string, unknown>).id as string,
+        listId: l.ideaListId ?? (l as unknown as Record<string, unknown>).id as string,
         name: l.name,
         category: l.category,
         ideaCount: l.ideas?.length ?? 0,
@@ -372,7 +372,7 @@ export class ToolHandlers {
 
     return {
       seriesId: wp.seriesId,
-      title: wp.title ?? (wp as Record<string, unknown>).seriesTitle as string,
+      title: wp.title ?? (wp as unknown as Record<string, unknown>).seriesTitle as string,
       schedule,
       going,
       interested,
@@ -401,7 +401,7 @@ export class ToolHandlers {
     const groupName = await this.resolveGroupName(input.groupId);
 
     return {
-      listId: result.ideaListId ?? (result as Record<string, unknown>).id as string,
+      listId: result.ideaListId ?? (result as unknown as Record<string, unknown>).id as string,
       name: result.name,
       category: result.category,
       groupName,
@@ -439,7 +439,7 @@ export class ToolHandlers {
     }
 
     return {
-      ideaId: result.ideaId ?? (result as Record<string, unknown>).id as string,
+      ideaId: result.ideaId ?? (result as unknown as Record<string, unknown>).id as string,
       name: result.name,
       listName,
     };
