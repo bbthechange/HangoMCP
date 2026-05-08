@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bd create:*)",
+      "Bash(bd list:*)",
+      "Bash(npm run:*)",
+      "Bash(npx tsc:*)",
+      "Bash(bd show:*)",
+      "Bash(bd note:*)",
+      "Bash(npx vitest:*)"
+    ]
+  }
+}
