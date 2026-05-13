@@ -19,6 +19,11 @@ export const TOOL_SCHEMAS = {
       },
       required: ['text'],
     },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
 
   list_groups: {
@@ -29,6 +34,11 @@ export const TOOL_SCHEMAS = {
       type: 'object' as const,
       properties: {},
       required: [],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
     },
   },
 
@@ -51,6 +61,11 @@ export const TOOL_SCHEMAS = {
         },
       },
       required: ['groupId'],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
     },
   },
 
@@ -153,6 +168,11 @@ export const TOOL_SCHEMAS = {
       },
       required: ['groupId', 'title'],
     },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
   },
 
   set_rsvp: {
@@ -178,6 +198,11 @@ export const TOOL_SCHEMAS = {
       },
       required: ['hangoutId', 'status'],
     },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
   get_idea_lists: {
     name: 'get_idea_lists',
@@ -198,6 +223,11 @@ export const TOOL_SCHEMAS = {
       },
       required: ['groupId'],
     },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
 
   get_watch_party: {
@@ -217,6 +247,11 @@ export const TOOL_SCHEMAS = {
         },
       },
       required: ['groupId', 'seriesId'],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
     },
   },
 
@@ -246,6 +281,11 @@ export const TOOL_SCHEMAS = {
         },
       },
       required: ['groupId', 'name'],
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
     },
   },
 
@@ -283,6 +323,11 @@ export const TOOL_SCHEMAS = {
       },
       required: ['groupId', 'listId', 'name'],
     },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
   },
 
   toggle_idea_interest: {
@@ -311,6 +356,11 @@ export const TOOL_SCHEMAS = {
       },
       required: ['groupId', 'listId', 'ideaId', 'interested'],
     },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
 
   offer_ride: {
@@ -337,6 +387,11 @@ export const TOOL_SCHEMAS = {
       },
       required: ['hangoutId', 'capacity'],
     },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
   },
 
   request_ride: {
@@ -356,6 +411,11 @@ export const TOOL_SCHEMAS = {
         },
       },
       required: ['hangoutId'],
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
     },
   },
 
@@ -386,6 +446,11 @@ export const TOOL_SCHEMAS = {
       },
       required: ['hangoutId', 'type'],
     },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
 
   parse_event_url: {
@@ -402,6 +467,11 @@ export const TOOL_SCHEMAS = {
       },
       required: ['url'],
     },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
 
   get_hangout_detail: {
@@ -417,6 +487,11 @@ export const TOOL_SCHEMAS = {
         },
       },
       required: ['hangoutId'],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
     },
   },
 
@@ -468,6 +543,11 @@ export const TOOL_SCHEMAS = {
       },
       required: ['hangoutId'],
     },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
 
   remove_rsvp: {
@@ -483,6 +563,11 @@ export const TOOL_SCHEMAS = {
         },
       },
       required: ['hangoutId'],
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
     },
   },
 
@@ -503,6 +588,11 @@ export const TOOL_SCHEMAS = {
         },
       },
       required: ['groupName'],
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
     },
   },
 
@@ -562,6 +652,11 @@ export const TOOL_SCHEMAS = {
       },
       required: ['hangoutId', 'title'],
     },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
   },
 
   vote_on_poll: {
@@ -585,6 +680,11 @@ export const TOOL_SCHEMAS = {
         },
       },
       required: ['hangoutId', 'pollId', 'optionId'],
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
     },
   },
 
@@ -624,6 +724,11 @@ export const TOOL_SCHEMAS = {
       },
       required: ['hangoutId', 'pollId'],
     },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
   },
 
   add_member: {
@@ -648,6 +753,11 @@ export const TOOL_SCHEMAS = {
       },
       required: ['groupId'],
     },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
   },
 
   generate_invite_link: {
@@ -663,6 +773,11 @@ export const TOOL_SCHEMAS = {
         },
       },
       required: ['groupId'],
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
     },
   },
 } as const;

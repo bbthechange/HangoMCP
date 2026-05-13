@@ -17,15 +17,15 @@ import {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function stubRequest(impl: (...args: unknown[]) => unknown) {
+function stubRequest(impl: (...args: never[]) => unknown) {
   return vi.spyOn(HttpClient.prototype, 'request').mockImplementation(impl as never);
 }
 
-function stubGetWithEtag(impl: (...args: unknown[]) => unknown) {
+function stubGetWithEtag(impl: (...args: never[]) => unknown) {
   return vi.spyOn(HttpClient.prototype, 'getWithEtag').mockImplementation(impl as never);
 }
 
-function stubRequestNoAuth(impl: (...args: unknown[]) => unknown) {
+function stubRequestNoAuth(impl: (...args: never[]) => unknown) {
   return vi.spyOn(HttpClient.prototype, 'requestNoAuth').mockImplementation(impl as never);
 }
 

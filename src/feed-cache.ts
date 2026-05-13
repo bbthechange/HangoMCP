@@ -68,7 +68,7 @@ export class FeedCache {
       }
     };
 
-    indexItems(response.withDay as Array<{ type: string } & Record<string, unknown>>);
-    indexItems(response.needsDay as Array<{ type: string } & Record<string, unknown>>);
+    indexItems(response.withDay as unknown as Array<{ type: string } & Record<string, unknown>>);
+    indexItems(response.needsDay as unknown as Array<{ type: string } & Record<string, unknown>>);
   }
 }

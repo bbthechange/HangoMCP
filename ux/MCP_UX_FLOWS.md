@@ -781,11 +781,15 @@ The agent should handle errors conversationally:
 
 ## Authentication Context
 
-The MCP server assumes the user is already authenticated. The agent operates on behalf of the authenticated user. The MCP server should:
+Auth is its own UX surface. See **[MCP_AUTH_UX.md](./MCP_AUTH_UX.md)** for the full short / medium / long-term plan covering:
 
-1. Accept an auth token (provided during MCP connection setup).
-2. Include it in all API calls.
-3. Never prompt for credentials — if the token is invalid, tell the user to log in via the app.
+- **Phase 1 (MVP):** `hango-mcp login` CLI subcommand — phone + password → OS keychain. No tokens in config files. Existing backend, no new endpoints.
+- **Phase 2:** "Connect AI Assistants" screen in iOS/Android. Users generate named, revocable, MCP-scoped tokens in-app and paste them via `hango-mcp login --paste`. Backend gains a token-purpose model.
+- **Phase 3:** Hosted MCP at `mcp.hango.app/mcp` with OAuth 2.1, enabling cloud assistants (claude.ai, ChatGPT, hosted Cursor) and one-click connector directory listings.
+
+For the flows in this document, assume the user is already authenticated by one of the above mechanisms. When auth fails at runtime (token revoked, refresh expired), the MCP server returns a structured error whose user-facing string instructs the user how to recover. See `MCP_AUTH_UX.md` § "Failure Recovery Pattern" for the standardized shape of these messages.
+
+The flow list below explicitly excludes account management (registration, login, password change, account deletion) because those remain app-only and security-sensitive. The auth UX doc is about *connecting* an AI assistant to an already-existing Hango account — not about creating or managing the account itself.
 
 ---
 

@@ -50,7 +50,15 @@ async function api<T>(path: string, opts: RequestInit = {}): Promise<T> {
     headers: { ...headers(), ...(opts.headers as Record<string, string> ?? {}) },
   });
   if (res.status === 204 || res.status === 304) return undefined as T;
-  const body = await res.json();
+  const text = await res.text();
+  let body: unknown = undefined;
+  if (text.length > 0) {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = text;
+    }
+  }
   if (!res.ok) {
     throw new Error(`${res.status} ${path}: ${JSON.stringify(body)}`);
   }
